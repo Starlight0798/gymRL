@@ -7,4 +7,4 @@
 -  DQN: rainbow DQN
 
 在离散动作空间，我一般使用PPO算法。
-因此我对离散和连续动作空间的代码探索主要在CartPole(PPO), Pentilum(PPO)两份代码进行，读者可以重点关注
+因此我对离散和连续动作空间的代码探索主要在CartPole(PPO), Pendulum(PPO)两份代码进行，读者可以重点关注
