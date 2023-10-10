@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Categorical
 from utils.normalization import Normalization, RewardScaling
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, MultiHeadAttention
+from utils.model import MLP, PSCN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 
@@ -31,15 +31,13 @@ class Config(BasicConfig):
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
-        self.fc_head = MLP([cfg.n_states, 64], last_act=True)
-        self.attention = MultiHeadAttention(64, 4)
+        self.fc_head = PSCN(cfg.n_states, 64)
         self.rnn, self.rnn_h = nn.GRU(64, 64, batch_first=True), None
         self.actor_fc = MLP([64, cfg.n_actions])
         self.critic_fc = MLP([64, 16, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
-        x = self.attention(x, x, x)
         out, self.rnn_h = self.rnn(x, self.rnn_h)
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)

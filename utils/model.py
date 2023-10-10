@@ -231,6 +231,35 @@ class DecoderLayer(nn.Module):
         return x
 
 
+class PSCN(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(PSCN, self).__init__()
+        assert output_dim > 0 and (output_dim & (output_dim - 1) == 0), "output_dim must be a power of 2"
+        self.hidden_dim = output_dim
+        self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True)
+        self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True)
+        self.fc3 = MLP([self.hidden_dim // 4, self.hidden_dim // 4], last_act=True)
+        self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True)
+
+    def forward(self, x):
+        x = self.fc1(x)
+
+        x1 = x[:, :self.hidden_dim // 2]
+        x = x[:, self.hidden_dim // 2:]
+        x = self.fc2(x)
+
+        x2 = x[:, :self.hidden_dim // 4]
+        x = x[:, self.hidden_dim // 4:]
+        x = self.fc3(x)
+
+        x3 = x[:, :self.hidden_dim // 8]
+        x = x[:, self.hidden_dim // 8:]
+        x4 = self.fc4(x)
+
+        out = torch.cat([x1, x2, x3, x4], dim=1)
+        return out
+
+
 
 if __name__ == "__main__":
     # 测试多头注意力机制
