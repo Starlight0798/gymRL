@@ -14,7 +14,6 @@ class BasicConfig:
         self.max_steps = 500
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.lr_decay = int(0.332 * self.train_eps)
         self.param_update_freq = 5
         self.gamma = 0.99
         self.lamda = 0.95
@@ -59,7 +58,7 @@ def make_env(env_name, render_mode='human', use_atari=False, unwrapped=False):
     return env
 
 
-def make_env_agent(cfg, network):
+def make_env_agent(cfg, Algorithm):
     env = make_env(cfg.env_name, render_mode=cfg.render_mode, use_atari=cfg.use_atari)
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
@@ -71,7 +70,7 @@ def make_env_agent(cfg, network):
     else:
         cfg.n_actions = env.action_space.n
     cfg.max_steps = env.spec.max_episode_steps or cfg.max_steps
-    agent = network(cfg)
+    agent = Algorithm(cfg)
     return env, agent, cfg
 
 
@@ -80,6 +79,7 @@ def train(env, agent, cfg):
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_reward_scale = hasattr(agent, 'reward_scaling')
     use_state_norm = hasattr(agent, 'state_norm')
+    use_acttion_fix = hasattr(agent, 'fix_action')
     cfg.show()
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}')
     for i in range(cfg.train_eps):
@@ -94,7 +94,7 @@ def train(env, agent, cfg):
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.choose_action(state)
-            if hasattr(agent, 'fix_action'):
+            if use_acttion_fix:
                 input_action = agent.fix_action(action)
             else:
                 input_action = action
@@ -136,6 +136,7 @@ def evaluate(env, agent, cfg, writer):
     state, _ = env.reset(seed=cfg.seed)
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_state_norm = hasattr(agent, 'state_norm')
+    use_acttion_fix = hasattr(agent, 'fix_action')
     if use_state_norm:
         state = agent.state_norm(state, update=False)
     if use_rnn:
@@ -143,7 +144,7 @@ def evaluate(env, agent, cfg, writer):
     for _ in range(cfg.max_steps):
         ep_step += 1
         action = agent.evaluate(state)
-        if hasattr(agent, 'fix_action'):
+        if use_acttion_fix:
             input_action = agent.fix_action(action)
         else:
             input_action = action
@@ -163,6 +164,7 @@ def test(env, agent, cfg):
     print('开始测试!')
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_state_norm = hasattr(agent, 'state_norm')
+    use_acttion_fix = hasattr(agent, 'fix_action')
     for i in range(cfg.test_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=cfg.seed)
@@ -173,7 +175,7 @@ def test(env, agent, cfg):
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.evaluate(state)
-            if hasattr(agent, 'fix_action'):
+            if use_acttion_fix:
                 input_action = agent.fix_action(action)
             else:
                 input_action = action

@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Beta
 from utils.normalization import Normalization, RewardScaling
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN
+from utils.model import MLP, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 
@@ -32,20 +32,16 @@ class Config(BasicConfig):
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
-        self.gru_size = 16
-        self.fc_head = PSCN(cfg.n_states, 4 * self.gru_size)
-        self.rnn_linear = MLP([4 * self.gru_size, 3 * self.gru_size])
-        self.rnn, self.rnn_h = nn.GRU(4 * self.gru_size, self.gru_size, batch_first=True), None
-        self.alpha_layer = MLP([4 * self.gru_size, cfg.n_actions])
-        self.beta_layer = MLP([4 * self.gru_size, cfg.n_actions])
-        self.critic_fc = MLP([4 * self.gru_size, 16, 1])
+        self.fc_head = PSCN(cfg.n_states, 64)
+        self.rnn, self.rnn_h = MLPRNN(64, 64, batch_first=True), None
+        self.alpha_layer = MLP([64, cfg.n_actions])
+        self.beta_layer = MLP([64, cfg.n_actions])
+        self.critic_fc = MLP([64, 16, 1])
 
 
     def forward(self, s):
         x = self.fc_head(s)
-        rnn_linear_out = self.rnn_linear(x)
-        rnn_out, self.rnn_h = self.rnn(x, self.rnn_h)
-        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
+        out, self.rnn_h = self.rnn(x, self.rnn_h)
         alpha = F.softplus(self.alpha_layer(out)) + 1.0
         beta = F.softplus(self.beta_layer(out)) + 1.0
         value = self.critic_fc(out)

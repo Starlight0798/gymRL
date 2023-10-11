@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Categorical
 from utils.normalization import RewardScaling
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, ConvBlock, PSCN
+from utils.model import MLP, ConvBlock, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 
@@ -36,26 +36,22 @@ class Config(BasicConfig):
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
-        self.gru_size = 64
         self.conv_layer = ConvBlock([
             (3, 16), (16, 32), (32, 64),
             (64, 64), (64, 32), (32, 32)
         ])
         dim_into_fc = self.dim_after_conv((3, 84, 84))
         print('dim_into_fc:', dim_into_fc)
-        self.fc_head = PSCN(dim_into_fc, 4 * self.gru_size)
-        self.rnn_linear = MLP([4 * self.gru_size, 3 * self.gru_size])
-        self.rnn, self.rnn_h = nn.GRU(4 * self.gru_size, self.gru_size, batch_first=True), None
-        self.actor_fc = MLP([4 * self.gru_size, cfg.n_actions])
-        self.critic_fc = MLP([4 * self.gru_size, 64, 1])
+        self.fc_head = PSCN(dim_into_fc, 256)
+        self.rnn, self.rnn_h = MLPRNN(256, 256, batch_first=True), None
+        self.actor_fc = MLP([256, cfg.n_actions])
+        self.critic_fc = MLP([256, 64, 1])
 
     def forward(self, s):
         feature = self.conv_layer(s)
         feature = feature.view(feature.size(0), -1)
         x = self.fc_head(feature)
-        rnn_linear_out = self.rnn_linear(x)
-        rnn_out, self.rnn_h = self.rnn(x, self.rnn_h)
-        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
+        out, self.rnn_h = self.rnn(x, self.rnn_h)
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)
         return prob, value

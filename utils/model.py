@@ -259,6 +259,21 @@ class PSCN(nn.Module):
         out = torch.cat([x1, x2, x3, x4], dim=1)
         return out
 
+# 将MLP和RNN以3:1的比例融合
+class MLPRNN(nn.Module):
+    def __init__(self, input_dim, output_dim, rnn=nn.GRU, *args, **kwargs):
+        super(MLPRNN, self).__init__()
+        assert output_dim % 4 == 0, "output_dim must be divisible by 4"
+        self.rnn_size = output_dim // 4
+        self.rnn_linear = MLP([input_dim, 3 * self.rnn_size])
+        self.rnn = rnn(input_dim, self.rnn_size, *args, **kwargs)
+
+    def forward(self, x, rnn_state):
+        rnn_linear_out = self.rnn_linear(x)
+        rnn_out, rnn_state = self.rnn(x, rnn_state)
+        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
+        return out, rnn_state
+
 
 
 if __name__ == "__main__":
