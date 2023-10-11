@@ -26,19 +26,24 @@ class Config(BasicConfig):
         self.ent_coef_start = 1e-2
         self.ent_coef_end = 1e-4
         self.ent_decay = int(0.332 * self.train_eps)
+        self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
-        self.fc_head = PSCN(cfg.n_states, 64)
-        self.rnn, self.rnn_h = nn.GRU(64, 64, batch_first=True), None
-        self.actor_fc = MLP([64, cfg.n_actions])
-        self.critic_fc = MLP([64, 16, 1])
+        self.gru_size = 16
+        self.fc_head = PSCN(cfg.n_states, 4 * self.gru_size)
+        self.rnn_linear = MLP([4 * self.gru_size, 3 * self.gru_size])
+        self.rnn, self.rnn_h = nn.GRU(4 * self.gru_size, self.gru_size, batch_first=True), None
+        self.actor_fc = MLP([4 * self.gru_size, cfg.n_actions])
+        self.critic_fc = MLP([4 * self.gru_size, 16, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
-        out, self.rnn_h = self.rnn(x, self.rnn_h)
+        rnn_linear_out = self.rnn_linear(x)
+        rnn_out, self.rnn_h = self.rnn(x, self.rnn_h)
+        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)
         return prob, value

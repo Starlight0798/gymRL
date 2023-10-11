@@ -95,7 +95,7 @@ class NoisyLinear(nn.Module):
         self.bias_epsilon.copy_(epsilon_j)
 
 
-# 深度可分离卷积层
+# 深度可分离卷积层，参数更少，效率比Conv2d更高
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=2):
         super(DepthwiseSeparableConv, self).__init__()
@@ -108,7 +108,7 @@ class DepthwiseSeparableConv(nn.Module):
         return x
 
 
-# 卷积层
+# 卷积网络块，每个卷积层默认使用深度可分离卷积而不是Conv2d
 class ConvBlock(nn.Module):
     def __init__(self,
                  channels: list[tuple],
@@ -192,7 +192,7 @@ class MultiHeadAttention(nn.Module):
         output = torch.matmul(scores, v)
         return output
     
-    
+# 编码器层
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, n_heads, dropout=0.1):
         super(EncoderLayer, self).__init__()
@@ -200,7 +200,7 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
-        self.ffn = MLP([d_model, d_model, d_model], "encoder_ffn")
+        self.ffn = MLP([d_model, d_model, d_model])
 
     def forward(self, x, mask=None):
         x = x + self.dropout(self.attn(x, x, x, mask))
@@ -209,7 +209,7 @@ class EncoderLayer(nn.Module):
         x = self.ln2(x)
         return x
 
-
+# 解码器层
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, n_heads, dropout=0.1):
         super(DecoderLayer, self).__init__()
@@ -219,7 +219,7 @@ class DecoderLayer(nn.Module):
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
         self.ln3 = nn.LayerNorm(d_model)
-        self.ffn = MLP([d_model, d_model, d_model], "decoder_ffn")
+        self.ffn = MLP([d_model, d_model, d_model])
         
     def forward(self, x, enc_out, src_mask=None, tgt_mask=None):
         x = x + self.dropout(self.attn1(x, x, x, tgt_mask))
@@ -230,11 +230,11 @@ class DecoderLayer(nn.Module):
         x = self.ln3(x)
         return x
 
-
+# 一种兼顾宽度和深度的全连接层，提取信息效率更高
 class PSCN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(PSCN, self).__init__()
-        assert output_dim > 0 and (output_dim & (output_dim - 1) == 0), "output_dim must be a power of 2"
+        assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8 "
         self.hidden_dim = output_dim
         self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True)
         self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True)

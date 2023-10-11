@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Categorical
 from utils.normalization import RewardScaling
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, ConvBlock, MultiHeadAttention
+from utils.model import MLP, ConvBlock, PSCN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 
@@ -28,6 +28,7 @@ class Config(BasicConfig):
         self.ent_coef_start = 1e-2
         self.ent_coef_end = 1e-4
         self.ent_decay = int(0.332 * self.train_eps)
+        self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
         self.use_atari = True
         self.gamma = 0.9
@@ -35,21 +36,26 @@ class Config(BasicConfig):
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
+        self.gru_size = 64
         self.conv_layer = ConvBlock([
             (3, 16), (16, 32), (32, 64),
             (64, 64), (64, 32), (32, 32)
         ])
         dim_into_fc = self.dim_after_conv((3, 84, 84))
-        self.attention = MultiHeadAttention(dim_into_fc, 8, 32, 32, 256)
-        self.rnn, self.rnn_h = nn.GRU(256, 256, batch_first=True), None
-        self.actor_fc = MLP([256, cfg.n_actions])
-        self.critic_fc = MLP([256, 64, 1])
+        print('dim_into_fc:', dim_into_fc)
+        self.fc_head = PSCN(dim_into_fc, 4 * self.gru_size)
+        self.rnn_linear = MLP([4 * self.gru_size, 3 * self.gru_size])
+        self.rnn, self.rnn_h = nn.GRU(4 * self.gru_size, self.gru_size, batch_first=True), None
+        self.actor_fc = MLP([4 * self.gru_size, cfg.n_actions])
+        self.critic_fc = MLP([4 * self.gru_size, 64, 1])
 
     def forward(self, s):
         feature = self.conv_layer(s)
         feature = feature.view(feature.size(0), -1)
-        x = self.attention(feature, feature, feature)
-        out, self.rnn_h = self.rnn(x, self.rnn_h)
+        x = self.fc_head(feature)
+        rnn_linear_out = self.rnn_linear(x)
+        rnn_out, self.rnn_h = self.rnn(x, self.rnn_h)
+        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)
         return prob, value
