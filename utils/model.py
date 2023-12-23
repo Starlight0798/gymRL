@@ -95,7 +95,7 @@ class NoisyLinear(nn.Module):
         self.bias_epsilon.copy_(epsilon_j)
 
 
-# 深度可分离卷积层，参数更少，效率比Conv2d更高
+# 深度可分离卷积层
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=2):
         super(DepthwiseSeparableConv, self).__init__()
