@@ -42,3 +42,34 @@ class PSCN(nn.Module):
 ```
 
 个人在这个层的实践过程中效果颇好，读者可以斟酌使用。
+
+### Tensorboard-SummaryWriter使用
+
+我在**其中一些代码**(PPO, RDQN)加入了tensorboard的使用来获取训练和评估指标，使用方法：
+
+1. 正在运行训练，或等到训练结束，代码运行目录会生成exp文件夹，里面存放了数据文件
+2. 代码运行目录下打开命令行窗口，输入：
+
+```cmd
+tensorboard --logdir=exp
+```
+
+如下图所示：
+
+![image-20240407180114610](assets/image-20240407180114610.png)
+
+然后打开http://localhost:6006/即可。
+
+可以直观地看到评估和训练的数据图。
+
+![image-20240407180928966](assets/image-20240407180928966.png)
+
+如果多条数据线重合在一起影响观看，左边可以取消勾选，如果还是无法解决，建议在exp目录下手动删除不需要的数据文件，然后重启tensorboard即可。理论上eval/reward这条曲线应该是不断上升的，如果不是则需要调参(玄学)。
+
+## 建议
+
+对DQN感兴趣的读者可以使用`CartPole(RDQN)`，即`Rainbow-DQN`。如果是初学者，建议先看`CartPole(DQN)`，这是DQN算法的基本实现，其它如DDQN，PER, DUEL均是在其基础上的改进实验。其中改进最显著的方法是DDQN(double-DQN)，PER和DUEL并不是很显著，并且会降低训练速度，因此读者可以参照只使用DDQN。
+
+对PPO感兴趣的读者可以参考`CartPole(PPO)`以及`Pendulum(PPO)`，分别是在离散动作空间和连续动作空间的PPO实践，使用了RNN，PSCN等技巧。
+
+对于连续动作空间，最推荐使用的算法是TD3，参考`Pendulum(TD3)`。离散空间`DQN`和`PPO`均可。
