@@ -58,7 +58,7 @@ tensorboard --logdir=exp
 
 ![image-20240407180114610](assets/image-20240407180114610.png)
 
-然后打开http://localhost:6006/即可。
+然后打开http://localhost:6006/ 即可。
 
 可以直观地看到评估和训练的数据图。
 
