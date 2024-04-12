@@ -95,7 +95,7 @@ class NoisyLinear(nn.Module):
         self.bias_epsilon.copy_(epsilon_j)
 
 
-# 深度可分离卷积层
+# 深度可分离卷积层，参数更少，效率比Conv2d更高
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=2):
         super(DepthwiseSeparableConv, self).__init__()
@@ -234,7 +234,7 @@ class DecoderLayer(nn.Module):
 class PSCN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(PSCN, self).__init__()
-        assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8 "
+        assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8"
         self.hidden_dim = output_dim
         self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True)
         self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True)
@@ -268,12 +268,11 @@ class MLPRNN(nn.Module):
         self.rnn_linear = MLP([input_dim, 3 * self.rnn_size])
         self.rnn = rnn(input_dim, self.rnn_size, *args, **kwargs)
 
-    def forward(self, x, rnn_state):
+    def forward(self, x, rnn_state: torch.Tensor):
         rnn_linear_out = self.rnn_linear(x)
         rnn_out, rnn_state = self.rnn(x, rnn_state)
         out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         return out, rnn_state
-
 
 
 if __name__ == "__main__":

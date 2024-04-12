@@ -62,14 +62,14 @@ def make_env_agent(cfg, Algorithm):
     env = make_env(cfg.env_name, render_mode=cfg.render_mode, use_atari=cfg.use_atari)
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
-    cfg.n_states = env.observation_space.shape[0]
+    cfg.n_states = int(env.observation_space.shape[0])
     env_continuous = isinstance(env.action_space, gym.spaces.Box)
     if env_continuous:
         cfg.action_bound = env.action_space.high[0]
-        cfg.n_actions = env.action_space.shape[0]
+        cfg.n_actions = int(env.action_space.shape[0])
     else:
-        cfg.n_actions = env.action_space.n
-    cfg.max_steps = env.spec.max_episode_steps or cfg.max_steps
+        cfg.n_actions = int(env.action_space.n)
+    cfg.max_steps = int(env.spec.max_episode_steps or cfg.max_steps)
     agent = Algorithm(cfg)
     return env, agent, cfg
 

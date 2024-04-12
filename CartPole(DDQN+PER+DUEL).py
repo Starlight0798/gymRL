@@ -11,7 +11,7 @@ class Config:
         self.env_name = 'CartPole-v1'
         self.algo_name = 'DDQN + PER + DUELING'
         self.render_mode = 'rgb_array'
-        self.train_eps = 500
+        self.train_eps = 100
         self.test_eps = 5
         self.max_steps = 2000
         self.epsilon_start = 0.95

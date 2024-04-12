@@ -207,6 +207,8 @@ def env_agent_config(cfg):
     cfg.n_actions = n_actions
     policy_net = MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)
     target_net = MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)
+    policy_net = torch.jit.script(policy_net) 
+    target_net = torch.jit.script(target_net) 
     memory = ReplayBuffer(cfg)
     agent = PER_DDQN(policy_net, target_net, memory, cfg)
     return env, agent

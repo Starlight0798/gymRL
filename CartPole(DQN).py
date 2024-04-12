@@ -5,6 +5,7 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from collections import deque
+from torch.cuda.amp import GradScaler, autocast
 
 
 class Config:
@@ -84,6 +85,7 @@ class DQN:
         self.cfg = cfg
         self.epsilon = cfg.epsilon_start
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=cfg.lr)
+        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -114,12 +116,18 @@ class DQN:
         reward_batch = torch.tensor(np.array(reward_batch), device=self.cfg.device, dtype=torch.float32)
         next_state_batch = torch.tensor(np.array(next_state_batch), device=self.cfg.device, dtype=torch.float32)
         done_batch = torch.tensor(np.array(done_batch), device=self.cfg.device, dtype=torch.float32)
-        q_value = self.policy_net(state_batch).gather(1, action_batch)
-        next_q_value = self.target_net(next_state_batch).max(dim=1)[0].detach()
-        expect_q_value = reward_batch + self.cfg.gamma * next_q_value * (1 - done_batch)
-        loss = F.mse_loss(q_value, expect_q_value.unsqueeze(1))
+        
+        with autocast():
+            q_value = self.policy_net(state_batch).gather(1, action_batch)
+            next_q_value = self.target_net(next_state_batch).max(dim=1)[0].detach()
+            expect_q_value = reward_batch + self.cfg.gamma * next_q_value * (1 - done_batch)
+            loss = F.mse_loss(q_value, expect_q_value.unsqueeze(1))
+            
         self.optimizer.zero_grad()
-        loss.backward()
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
@@ -133,8 +141,8 @@ def env_agent_config(cfg):
     n_actions = env.action_space.n
     cfg.n_states = n_states
     cfg.n_actions = n_actions
-    policy_net = MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)
-    target_net = MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)
+    policy_net = torch.jit.script(MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)) 
+    target_net = torch.jit.script(MLP(n_states, n_actions, cfg.hidden_dim).to(cfg.device)) 
     memory = ReplayBuffer(cfg.memory_capacity)
     agent = DQN(policy_net, target_net, memory, cfg)
     return env, agent

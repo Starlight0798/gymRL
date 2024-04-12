@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
+from torch.cuda.amp import GradScaler, autocast
 
 class Config:
     def __init__(self):
@@ -69,7 +70,7 @@ class Actor(nn.Module):
         self.fc1 = nn.Linear(cfg.n_states, cfg.actor_hidden_dim)
         self.fc2 = nn.Linear(cfg.actor_hidden_dim, cfg.actor_hidden_dim)
         self.fc3 = nn.Linear(cfg.actor_hidden_dim, cfg.n_actions)
-        self.action_bound = cfg.action_bound
+        self.action_bound = torch.tensor(cfg.action_bound, dtype=torch.float32, device=cfg.device)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -97,13 +98,14 @@ class DDPG:
     def __init__(self, cfg):
         self.cfg = cfg
         self.memory = ReplayBuffer(cfg)
-        self.actor = Actor(cfg).to(cfg.device)
-        self.actor_target = Actor(cfg).to(cfg.device)
-        self.critic = Critic(cfg).to(cfg.device)
-        self.critic_target = Critic(cfg).to(cfg.device)
+        self.actor = torch.jit.script(Actor(cfg).to(cfg.device))
+        self.actor_target = torch.jit.script(Actor(cfg).to(cfg.device))
+        self.critic = torch.jit.script(Critic(cfg).to(cfg.device))
+        self.critic_target = torch.jit.script(Critic(cfg).to(cfg.device))
         self.actor_optim = optim.Adam(self.actor.parameters(), lr=cfg.lr_a)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=cfg.lr_c)
         self.critic_target.load_state_dict(self.critic.state_dict())
+        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -118,19 +120,24 @@ class DDPG:
             return 0, 0
         states, actions, rewards, next_states, dones = self.memory.sample()
         actions, rewards, dones = actions.view(-1, 1), rewards.view(-1, 1), dones.view(-1, 1)
-        next_q_value = self.critic_target(next_states, self.actor_target(next_states))
-        target_q_value = rewards + (1 - dones) * self.cfg.gamma * next_q_value
-
-        critic_loss = torch.mean(F.mse_loss(self.critic(states, actions), target_q_value))
+        
+        with autocast():
+            next_q_value = self.critic_target(next_states, self.actor_target(next_states))
+            target_q_value = rewards + (1 - dones) * self.cfg.gamma * next_q_value 
+            critic_loss = torch.mean(F.mse_loss(self.critic(states, actions), target_q_value))
+            
         self.critic_optim.zero_grad()
-        critic_loss.backward()
-        self.critic_optim.step()
+        self.scaler.scale(critic_loss).backward()
+        self.scaler.step(self.critic_optim)
 
-        actor_loss = -torch.mean(self.critic(states, self.actor(states)))
+        with autocast():
+            actor_loss = -torch.mean(self.critic(states, self.actor(states)))
+            
         self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
+        self.scaler.scale(actor_loss).backward()
+        self.scaler.step(self.actor_optim)
 
+        self.scaler.update()
         self.update_params()
 
         return actor_loss.item(), critic_loss.item()
@@ -148,8 +155,8 @@ def env_agent_config(cfg):
     env = gym.make(cfg.env_name, render_mode = cfg.render_mode).unwrapped
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
-    cfg.n_states = env.observation_space.shape[0]
-    cfg.n_actions = env.action_space.shape[0]
+    cfg.n_states = int(env.observation_space.shape[0])
+    cfg.n_actions = int(env.action_space.shape[0])
     cfg.action_bound = env.action_space.high[0]
     agent = DDPG(cfg)
     return env, agent

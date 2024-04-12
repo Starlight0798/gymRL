@@ -6,6 +6,7 @@ from copy import deepcopy
 from torch import nn, optim
 from torch.distributions import Categorical
 from torch.nn import functional as F
+from torch.cuda.amp import GradScaler, autocast
 
 
 class Config:
@@ -99,19 +100,20 @@ class SAC:
         self.cfg = cfg
         self.memory = ReplayBuffer(cfg)
 
-        self.actor = Actor(cfg).to(cfg.device)
+        self.actor = torch.jit.script(Actor(cfg).to(cfg.device))
         self.actor_optim = optim.Adam(self.actor.parameters(), lr=cfg.lr_a)
 
-        self.critic1 = Critic(cfg).to(cfg.device)
+        self.critic1 = torch.jit.script(Critic(cfg).to(cfg.device))
         self.critic1_target = deepcopy(self.critic1)
         self.critic1_optim = optim.Adam(self.critic1.parameters(), lr=cfg.lr_c)
 
-        self.critic2 = Critic(cfg).to(cfg.device)
+        self.critic2 = torch.jit.script(Critic(cfg).to(cfg.device))
         self.critic2_target = deepcopy(self.critic2)
         self.critic2_optim = optim.Adam(self.critic2.parameters(), lr=cfg.lr_c)
 
         self.log_alpha = torch.tensor(np.log(0.01), requires_grad=True, device=cfg.device, dtype=torch.float32)
         self.alpha_optim = optim.Adam([self.log_alpha], lr=cfg.lr_alpha)
+        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -143,35 +145,43 @@ class SAC:
         state, action, reward, next_state, done = self.memory.sample()
         action, reward, done = action.view(-1, 1).type(torch.long), \
             reward.view(-1, 1), done.view(-1, 1)
-        target_q = self.calc_target_q(reward, next_state, done)
-        q1 = self.critic1(state).gather(1, action)
-        critic1_loss = torch.mean(F.mse_loss(q1, target_q.detach()))
-        q2 = self.critic2(state).gather(1, action)
-        critic2_loss = torch.mean(F.mse_loss(q2, target_q.detach()))
+            
+        with autocast():
+            target_q = self.calc_target_q(reward, next_state, done)
+            q1 = self.critic1(state).gather(1, action)
+            critic1_loss = torch.mean(F.mse_loss(q1, target_q.detach()))
+            q2 = self.critic2(state).gather(1, action)
+            critic2_loss = torch.mean(F.mse_loss(q2, target_q.detach()))
+        
         self.critic1_optim.zero_grad()
-        critic1_loss.backward()
-        self.critic1_optim.step()
+        self.scaler.scale(critic1_loss).backward()
+        self.scaler.step(self.critic1_optim)
+        
         self.critic2_optim.zero_grad()
-        critic2_loss.backward()
-        self.critic2_optim.step()
+        self.scaler.scale(critic2_loss).backward()
+        self.scaler.step(self.critic2_optim)
 
-        prob = self.actor(state)
-        log_prob = torch.log(prob + 1e-8)
-        entropy = -torch.sum(prob * log_prob, dim=1, keepdim=True)
-        q1 = self.critic1(state)
-        q2 = self.critic2(state)
-        min_q = torch.sum(prob * torch.min(q1, q2), dim=1, keepdim=True)
-        actor_loss = torch.mean(-self.log_alpha.exp() * entropy - min_q)
+        with autocast():
+            prob = self.actor(state)
+            log_prob = torch.log(prob + 1e-8)
+            entropy = -torch.sum(prob * log_prob, dim=1, keepdim=True)
+            q1 = self.critic1(state)
+            q2 = self.critic2(state)
+            min_q = torch.sum(prob * torch.min(q1, q2), dim=1, keepdim=True)
+            actor_loss = torch.mean(-self.log_alpha.exp() * entropy - min_q)
+        
         self.actor_optim.zero_grad()
-        actor_loss.backward()
-        self.actor_optim.step()
+        self.scaler.scale(actor_loss).backward()
+        self.scaler.step(self.actor_optim)
 
-        alpha_loss = torch.mean(self.log_alpha.exp() *
-                                (entropy - self.cfg.target_entropy).detach())
+        with autocast():
+            alpha_loss = torch.mean(self.log_alpha.exp() * (entropy - self.cfg.target_entropy).detach())
+        
         self.alpha_optim.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optim.step()
-
+        self.scaler.scale(alpha_loss).backward()
+        self.scaler.step(self.alpha_optim)
+        
+        self.scaler.update()
         self.soft_update(self.critic1_target, self.critic1)
         self.soft_update(self.critic2_target, self.critic2)
 
@@ -182,8 +192,8 @@ def env_agent_config(cfg):
     env = gym.make(cfg.env_name, render_mode=cfg.render_mode).unwrapped
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
-    cfg.n_states = env.observation_space.shape[0]
-    cfg.n_actions = env.action_space.n
+    cfg.n_states = int(env.observation_space.shape[0])
+    cfg.n_actions = int(env.action_space.n)
     agent = SAC(cfg)
     return env, agent
 
