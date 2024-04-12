@@ -14,6 +14,9 @@ class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
         self.env_name = 'CartPole-v1'
+        self.render_mode = 'rgb_array'
+        self.unwrapped = True
+        self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 500
         self.lr_start = 1e-3

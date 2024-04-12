@@ -22,6 +22,7 @@ class BasicConfig:
         self.n_actions = None
         self.action_bound = None
         self.use_atari = False
+        self.unwrapped = False
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -59,7 +60,7 @@ def make_env(env_name, render_mode='human', use_atari=False, unwrapped=False):
 
 
 def make_env_agent(cfg, Algorithm):
-    env = make_env(cfg.env_name, render_mode=cfg.render_mode, use_atari=cfg.use_atari)
+    env = make_env(cfg.env_name, render_mode=cfg.render_mode, use_atari=cfg.use_atari, unwrapped=cfg.unwrapped)
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
     cfg.n_states = int(env.observation_space.shape[0])

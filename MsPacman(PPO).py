@@ -16,8 +16,8 @@ class Config(BasicConfig):
         self.env_name = 'MsPacman-ramDeterministic-v4'
         self.render_mode = 'rgb_array'
         self.algo_name = 'PPO'
-        self.train_eps = 1500
-        self.max_steps = 1000
+        self.train_eps = 500
+        self.max_steps = 500
         self.lr_start = 1e-3
         self.lr_end = 1e-5
         self.batch_size = 512
