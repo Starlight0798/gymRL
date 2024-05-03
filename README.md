@@ -7,7 +7,6 @@
 -  DQN: rainbow DQN
 
 在离散动作空间和连续动作空间，PPO算法都奏效，因此我对离散和连续动作空间的代码探索主要在CartPole(PPO), Pendulum(PPO)两份代码进行，读者可以重点关注。
-感谢知乎分享：https://zhuanlan.zhihu.com/p/654972230 提出的神经网络构建思路，尤其是其提出的PSCN层：
 
 ```python
 class PSCN(nn.Module):
