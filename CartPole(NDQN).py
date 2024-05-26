@@ -6,7 +6,7 @@ from utils.model import MLP, NoisyLinear
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 from utils.normalization import Normalization, RewardScaling
-
+from torch.optim.lr_scheduler import ExponentialLR
 
 class Config(BasicConfig):
     def __init__(self):
@@ -15,9 +15,6 @@ class Config(BasicConfig):
         self.algo_name = 'NDQN'
         self.train_eps = 500
         self.lr_start = 1e-3
-        self.lr_end = 1e-5
-        self.lr_update_freq = 50
-        self.lr_decay = 40000
         self.batch_size = 128
         self.preload_size = 256
         self.memory_capacity = 10000
@@ -44,6 +41,7 @@ class DQN:
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
+        self.scheduler = ExponentialLR(self.optimizer, gamma=cfg.gamma)
         self.cfg = cfg
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
@@ -84,12 +82,8 @@ class DQN:
         self.learn_step += 1
         if self.learn_step % self.cfg.target_update == 0:
             self.target_net.load_state_dict(self.net.state_dict())
-
-        if self.learn_step % self.cfg.lr_update_freq == 0:
-            self.lr = self.cfg.lr_end + (self.cfg.lr_start - self.cfg.lr_end) * \
-                      np.exp(-1.0 * self.learn_step / self.cfg.lr_decay)
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = self.lr
+            
+        self.scheduler.step()
 
         return {
             'loss': loss.item(),

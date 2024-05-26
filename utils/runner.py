@@ -121,7 +121,7 @@ def train(env, agent, cfg):
             for key, value in monitors.items():
                 if not np.isnan(value):
                     writer.add_scalar(f'train/{key}', value, global_step=agent.learn_step)
-            writer.add_scalar('train/lr', agent.lr, global_step=agent.learn_step)
+            writer.add_scalar('train/lr', agent.optim.param_groups[0]['lr'], global_step=agent.learn_step)
         writer.add_scalar('train/reward', ep_reward, global_step=i)
         writer.add_scalar('train/step', ep_step, global_step=i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')

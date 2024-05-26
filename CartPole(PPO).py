@@ -21,7 +21,6 @@ class Config(BasicConfig):
         self.algo_name = 'PPO'
         self.train_eps = 500
         self.lr_start = 1e-3
-        self.lr_end = 1e-5
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -31,7 +30,6 @@ class Config(BasicConfig):
         self.ent_coef_start = 1e-2
         self.ent_coef_end = 1e-4
         self.ent_decay = int(0.332 * self.train_eps)
-        self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
 
 class ActorCritic(nn.Module):
@@ -65,7 +63,6 @@ class PPO:
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
         self.learn_step = 0
-        self.lr = cfg.lr_start
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
 

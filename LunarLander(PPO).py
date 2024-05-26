@@ -17,32 +17,30 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 1500
+        self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 500
-        self.lr_start = 1e-3
-        self.lr_end = 1e-5
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
         self.dual_clip = 3.0
         self.val_coef = 0.5
+        self.lr_start = 1e-3
         self.ent_coef_start = 1e-2
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
-        self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
         self.device = cfg.device
-        self.fc_head = PSCN(cfg.n_states, 64)
-        self.rnn = MLPRNN(64, 64, batch_first=True)
-        self.rnn_h = torch.zeros(1, 16, device=self.device)
-        self.actor_fc = MLP([64, cfg.n_actions])
-        self.critic_fc = MLP([64, 16, 1])
+        self.fc_head = PSCN(cfg.n_states, 128)
+        self.rnn = MLPRNN(128, 128, batch_first=True)
+        self.rnn_h = torch.zeros(1, 32, device=self.device)
+        self.actor_fc = MLP([128, cfg.n_actions])
+        self.critic_fc = MLP([128, 16, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
@@ -53,7 +51,7 @@ class ActorCritic(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 16, device=self.device)
+        self.rnn_h = torch.zeros(1, 32, device=self.device)
 
 class PPO:
     def __init__(self, cfg):
@@ -65,7 +63,6 @@ class PPO:
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
         self.learn_step = 0
-        self.lr = cfg.lr_start
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
 
@@ -157,7 +154,6 @@ class PPO:
         self.learn_step += 1
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
-        self.lr = self.optim.param_groups[0]['lr']
 
         return {
             'total_loss': losses[0] / self.cfg.epochs,
