@@ -17,19 +17,19 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 2000
+        self.max_steps = 1500
         self.algo_name = 'PPO'
         self.train_eps = 500
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.batch_size = 1024
-        self.mini_batch = 32
+        self.batch_size = 512
+        self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
         self.dual_clip = 3.0
         self.val_coef = 0.5
         self.ent_coef_start = 1e-2
-        self.ent_coef_end = 1e-4
+        self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
@@ -157,6 +157,7 @@ class PPO:
         self.learn_step += 1
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
+        self.lr = self.optim.param_groups[0]['lr']
 
         return {
             'total_loss': losses[0] / self.cfg.epochs,

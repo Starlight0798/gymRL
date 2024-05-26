@@ -164,6 +164,7 @@ class PPO:
         self.learn_step += 1
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
+        self.lr = self.optim.param_groups[0]['lr']
 
         return {
             'total_loss': losses[0] / self.cfg.epochs,
