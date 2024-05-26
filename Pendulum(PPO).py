@@ -9,6 +9,7 @@ from utils.model import MLP, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import ExponentialLR
 
 class Config(BasicConfig):
     def __init__(self):
@@ -58,6 +59,7 @@ class PPO:
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
+        self.scheduler = ExponentialLR(self.optim, gamma=cfg.gamma)
         self.memory = ReplayBuffer(cfg)
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
@@ -157,27 +159,18 @@ class PPO:
                 losses[2] += value_loss.item()
                 losses[3] += entropy_loss.item()
 
+        self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
-        losses[[0, 1, 2, 3]] /= self.cfg.epochs
-        losses[3] /= (self.cfg.batch_size // cfg.mini_batch)
-        losses[4] = adv.mean().item()
-
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        if self.learn_step % self.cfg.param_update_freq == 0:
-            self.lr = self.cfg.lr_end + (self.cfg.lr_start - self.cfg.lr_end) * \
-                      np.exp(-1.0 * self.learn_step / self.cfg.lr_decay)
-            for param_group in self.optim.param_groups:
-                param_group['lr'] = self.lr
-
         return {
-            'total_loss': losses[0],
-            'clip_loss': losses[1],
-            'value_loss': losses[2],
-            'entropy_loss': losses[3],
-            'advantage': losses[4]
+            'total_loss': losses[0] / self.cfg.epochs,
+            'clip_loss': losses[1] / self.cfg.epochs,
+            'value_loss': losses[2] / self.cfg.epochs,
+            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'advantage': adv.mean().item()
         }
 
 if __name__ == '__main__':

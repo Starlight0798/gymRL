@@ -19,7 +19,7 @@ def orthogonal_init(layer, gain=np.sqrt(2)):
 class MLP(nn.Module):
     def __init__(self,
                  dim_list,
-                 activation=nn.ReLU(),
+                 activation=nn.PReLU(),
                  last_act=False,
                  use_norm=False,
                  linear=nn.Linear
@@ -274,10 +274,3 @@ class MLPRNN(nn.Module):
         out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         return out, rnn_state
 
-
-if __name__ == "__main__":
-    # 测试多头注意力机制
-    x = torch.randn(32, 512)
-    mha = MultiHeadAttention(512, 8)
-    y = mha(x, x, x)
-    print(y.shape)

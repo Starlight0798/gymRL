@@ -9,19 +9,21 @@ from utils.model import MLP, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import ExponentialLR
 
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
-        self.env_name = 'MsPacman-ramDeterministic-v4'
+        self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
+        self.unwrapped = True
+        self.max_steps = 2000
         self.algo_name = 'PPO'
         self.train_eps = 500
-        self.max_steps = 500
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.batch_size = 512
-        self.mini_batch = 16
+        self.batch_size = 1024
+        self.mini_batch = 32
         self.epochs = 3
         self.clip = 0.2
         self.dual_clip = 3.0
@@ -31,17 +33,16 @@ class Config(BasicConfig):
         self.ent_decay = int(0.332 * self.train_eps)
         self.lr_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.gamma = 0.9
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
         self.device = cfg.device
-        self.fc_head = PSCN(cfg.n_states, 256)
-        self.rnn = MLPRNN(256, 256, batch_first=True)
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
-        self.actor_fc = MLP([256, cfg.n_actions])
-        self.critic_fc = MLP([256, 64, 1])
+        self.fc_head = PSCN(cfg.n_states, 64)
+        self.rnn = MLPRNN(64, 64, batch_first=True)
+        self.rnn_h = torch.zeros(1, 16, device=self.device)
+        self.actor_fc = MLP([64, cfg.n_actions])
+        self.critic_fc = MLP([64, 16, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
@@ -52,14 +53,14 @@ class ActorCritic(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
-
+        self.rnn_h = torch.zeros(1, 16, device=self.device)
 
 class PPO:
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
+        self.scheduler = ExponentialLR(self.optim, gamma=cfg.gamma)
         self.memory = ReplayBuffer(cfg)
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
@@ -149,31 +150,21 @@ class PPO:
                 losses[1] += clip_loss.item()
                 losses[2] += value_loss.item()
                 losses[3] += entropy_loss.item()
-
-        
+                
+            
+        self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
-        losses[[0, 1, 2, 3]] /= self.cfg.epochs
-        losses[3] /= (self.cfg.batch_size // cfg.mini_batch)
-        losses[4] = adv.mean().item()
-
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        if self.learn_step % self.cfg.param_update_freq == 0:
-            self.lr = self.cfg.lr_end + (self.cfg.lr_start - self.cfg.lr_end) * \
-                      np.exp(-1.0 * self.learn_step / self.cfg.lr_decay)
-            for param_group in self.optim.param_groups:
-                param_group['lr'] = self.lr
-
         return {
-            'total_loss': losses[0],
-            'clip_loss': losses[1],
-            'value_loss': losses[2],
-            'entropy_loss': losses[3],
-            'advantage': losses[4]
+            'total_loss': losses[0] / self.cfg.epochs,
+            'clip_loss': losses[1] / self.cfg.epochs,
+            'value_loss': losses[2] / self.cfg.epochs,
+            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'advantage': adv.mean().item()
         }
-
 
 if __name__ == '__main__':
     cfg = Config()
