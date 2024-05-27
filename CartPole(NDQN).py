@@ -19,8 +19,6 @@ class Config(BasicConfig):
         self.preload_size = 256
         self.memory_capacity = 10000
         self.target_update = 400
-        self.use_reward_scale = True
-        self.use_state_norm = True
 
 class DQNnet(nn.Module):
     def __init__(self, cfg):

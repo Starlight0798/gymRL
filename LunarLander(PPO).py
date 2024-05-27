@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.unwrapped = True
         self.max_steps = 1500
         self.algo_name = 'PPO'
-        self.train_eps = 10
+        self.train_eps = 3000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -31,8 +31,6 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.use_reward_scale = True
-        self.use_state_norm = True
         self.load_model = True
 
 class ActorCritic(nn.Module):

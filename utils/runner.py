@@ -24,8 +24,8 @@ class BasicConfig:
         self.action_bound = None
         self.use_atari = False
         self.unwrapped = False
-        self.use_state_norm = False
-        self.use_reward_scale = False
+        self.use_state_norm = True
+        self.use_reward_scale = True
         self.load_model = False
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
