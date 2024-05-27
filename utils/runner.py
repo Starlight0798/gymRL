@@ -26,6 +26,7 @@ class BasicConfig:
         self.use_state_norm = True
         self.use_reward_scale = True
         self.load_model = False
+        self.save_freq = 100
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -51,12 +52,13 @@ def make_env(cfg):
     env = gym.make(cfg.env_name, render_mode=cfg.render_mode)
     s = env.observation_space.shape
     use_rgb = len(s) == 3 and s[2] in [1, 3]
-    frame_skip = 4 if 'NoFrameskip' in cfg.env_name else 1
     if cfg.use_atari:
+        frame_skip = 4 if 'NoFrameskip' in cfg.env_name else 1
         env = AtariPreprocessing(env, grayscale_obs=False, terminal_on_life_loss=True,
                                  scale_obs=True, frame_skip=frame_skip)
     if use_rgb:
         env = PyTorchFrame(env)
+
     if cfg.unwrapped:
         env = env.unwrapped
         
@@ -78,11 +80,10 @@ def train(env, agent, cfg):
     print('开始训练!')
     if cfg.load_model:
         agent.load_model()
-    else:
-        if cfg.use_reward_scale:
-            agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
-        if cfg.use_state_norm:
-            agent.state_norm = Normalization(shape=cfg.n_states)
+    if cfg.use_reward_scale and not hasattr(agent, "reward_scale"):
+        agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
+    if cfg.use_state_norm and not hasattr(agent, "state_norm"):
+        agent.state_norm = Normalization(shape=env.observation_space.shape)
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
     cfg.show()
@@ -134,7 +135,7 @@ def train(env, agent, cfg):
             tools = {'writer': writer}
             evaluate(env, agent, cfg, tools)
             
-        if (i + 1) % 100 == 0:
+        if (i + 1) % cfg.save_freq == 0:
             agent.save_model()    
             
     print('完成训练!')
