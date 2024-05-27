@@ -26,6 +26,7 @@ class BasicConfig:
         self.unwrapped = False
         self.use_state_norm = False
         self.use_reward_scale = False
+        self.load_model = False
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -47,25 +48,22 @@ class PyTorchFrame(gym.ObservationWrapper):
         return np.rollaxis(observation, 2)
 
 
-def make_env(env_name, render_mode='human', use_atari=False, unwrapped=False):
-    env = gym.make(env_name, render_mode=render_mode)
+def make_env(cfg):
+    env = gym.make(cfg.env_name, render_mode=cfg.render_mode)
     s = env.observation_space.shape
     use_rgb = len(s) == 3 and s[2] in [1, 3]
-    frame_skip = 4 if 'NoFrameskip' in env_name else 1
-    if use_atari:
+    frame_skip = 4 if 'NoFrameskip' in cfg.env_name else 1
+    if cfg.use_atari:
         env = AtariPreprocessing(env, grayscale_obs=False, terminal_on_life_loss=True,
                                  scale_obs=True, frame_skip=frame_skip)
     if use_rgb:
         env = PyTorchFrame(env)
-    if unwrapped:
+    if cfg.unwrapped:
         env = env.unwrapped
-    return env
-
-
-def make_env_agent(cfg, Algorithm):
-    env = make_env(cfg.env_name, render_mode=cfg.render_mode, use_atari=cfg.use_atari, unwrapped=cfg.unwrapped)
+        
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
+    
     cfg.n_states = int(env.observation_space.shape[0])
     env_continuous = isinstance(env.action_space, gym.spaces.Box)
     if env_continuous:
@@ -74,8 +72,7 @@ def make_env_agent(cfg, Algorithm):
     else:
         cfg.n_actions = int(env.action_space.n)
     cfg.max_steps = int(env.spec.max_episode_steps or cfg.max_steps)
-    agent = Algorithm(cfg)
-    return env, agent, cfg
+    return env
 
 
 def train(env, agent, cfg):
@@ -128,9 +125,14 @@ def train(env, agent, cfg):
         writer.add_scalar('train/reward', ep_reward, global_step=i)
         writer.add_scalar('train/step', ep_step, global_step=i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
+        
         if (i + 1) % cfg.eval_freq == 0:
             tools = {'writer': writer, 'state_norm': state_norm}
             evaluate(env, agent, cfg, tools)
+            
+        if (i + 1) % 100 == 0:
+            agent.save_model(learn_step=agent.learn_step, ent_coef=getattr(agent, 'ent_coef', None))    
+            
     print('完成训练!')
     env.close()
     writer.close()
@@ -194,3 +196,6 @@ def test(env, agent, cfg):
         print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}')
     print('结束测试!')
     env.close()
+    
+    
+

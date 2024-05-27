@@ -4,9 +4,9 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN
+from utils.model import MLP, PSCN, MLPRNN, ModelLoader
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
-from utils.runner import train, test, make_env, make_env_agent, BasicConfig
+from utils.runner import train, test, make_env, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 1000
+        self.max_steps = 1500
         self.algo_name = 'PPO'
         self.train_eps = 3000
         self.batch_size = 512
@@ -33,6 +33,7 @@ class Config(BasicConfig):
         self.grad_clip = 0.5
         self.use_reward_scale = True
         self.use_state_norm = True
+        self.load_model = True
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
@@ -55,7 +56,7 @@ class ActorCritic(nn.Module):
     def reset_hidden(self):
         self.rnn_h = torch.zeros(1, 32, device=self.device)
 
-class PPO:
+class PPO(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
@@ -65,6 +66,7 @@ class PPO:
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
+        super().__init__(self.net, self.optim, self.scheduler, save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -165,7 +167,18 @@ class PPO:
 
 if __name__ == '__main__':
     cfg = Config()
-    env, agent, cfg = make_env_agent(cfg, PPO)
+    env = make_env(cfg)
+    agent = PPO(cfg)
+    
+    if cfg.load_model:
+        try:
+            agent.load_model(extra_names=['ent_coef', 'learn_step'])
+        except FileNotFoundError:
+            print("No saved model found. Starting training from scratch.")
+            
     train(env, agent, cfg)
-    env = make_env(cfg.env_name, render_mode='human')
+    agent.save_model(learn_step=agent.learn_step, ent_coef=agent.ent_coef)
+    
+    cfg.render_mode = 'human'
+    env = make_env(cfg)
     test(env, agent, cfg)

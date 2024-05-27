@@ -6,7 +6,7 @@
 -  PPO: dual-PPO, clip-PPO, use-RNN, attention etc.
 -  DQN: rainbow DQN
 
-在离散动作空间和连续动作空间，PPO算法都奏效，因此我对离散和连续动作空间的代码探索主要在CartPole(PPO), Pendulum(PPO)两份代码进行，读者可以重点关注。
+在离散动作空间和连续动作空间，PPO算法都奏效，因此我对离散和连续动作空间的代码探索主要在LunarLander(PPO), Pendulum(PPO)两份代码进行，读者可以重点关注。
 
 ```python
 class PSCN(nn.Module):
@@ -92,7 +92,7 @@ env = gym.make(cfg.env_name, render_mode = "human")
 
 对DQN感兴趣的读者可以使用`CartPole(RDQN)`，即`Rainbow-DQN`。如果是初学者，建议先看`CartPole(DQN)`，这是DQN算法的基本实现，其它如DDQN，PER, DUEL均是在其基础上的改进实验。其中改进最显著的方法是DDQN(double-DQN)，PER和DUEL并不是很显著，并且会降低训练速度，因此读者可以参照只使用DDQN。
 
-对PPO感兴趣的读者可以参考`CartPole(PPO)`以及`Pendulum(PPO)`，分别是在离散动作空间和连续动作空间的PPO实践，使用了RNN，PSCN等技巧。
+对PPO感兴趣的读者可以参考`LunarLander(PPO)`以及`Pendulum(PPO)`，分别是在离散动作空间和连续动作空间的PPO实践，使用了RNN，PSCN等技巧。
 
 对于连续动作空间，最推荐使用的算法是TD3，参考`Pendulum(TD3)`。离散空间`DQN`和`PPO`均可。
 
@@ -100,3 +100,4 @@ env = gym.make(cfg.env_name, render_mode = "human")
 
 - 加入torch.jit.script使用，jit优化能显著提升推理速度，我推荐任何人使用它
 - 使用混合精度，显著优化降低显存使用
+- 使用CosineAnnealingLR调整学习率，效果显著

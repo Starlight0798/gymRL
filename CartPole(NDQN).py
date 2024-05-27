@@ -2,10 +2,10 @@ import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
-from utils.model import MLP, NoisyLinear
+from utils.model import MLP, NoisyLinear, ModelLoader
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
-from utils.runner import train, test, make_env, make_env_agent, BasicConfig
-from torch.optim.lr_scheduler import ExponentialLR
+from utils.runner import train, test, make_env, BasicConfig
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
     def __init__(self):
@@ -14,6 +14,7 @@ class Config(BasicConfig):
         self.algo_name = 'NDQN'
         self.train_eps = 500
         self.lr_start = 1e-3
+        self.lr_end = 1e-5
         self.batch_size = 128
         self.preload_size = 256
         self.memory_capacity = 10000
@@ -35,18 +36,19 @@ class DQNnet(nn.Module):
         q = v + (a - torch.mean(a, dim=-1, keepdim=True))
         return q
 
-class DQN:
+class DQN(ModelLoader):
     def __init__(self, cfg):
         self.memory = ReplayBuffer(cfg)
         self.net = DQNnet(cfg).to(cfg.device)
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
-        self.scheduler = ExponentialLR(self.optimizer, gamma=cfg.gamma)
+        self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.cfg = cfg
         self.learn_step = 0
         self.predict_step = 0
         self.lr = cfg.lr_start
+        super().__init__(self.net, self.optim, self.scheduler, save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -92,7 +94,9 @@ class DQN:
 
 if __name__ == '__main__':
     cfg = Config()
-    env, agent, cfg = make_env_agent(cfg, DQN)
+    env = make_env(cfg)
+    agent = DQN(cfg)
     train(env, agent, cfg)
-    env = make_env(cfg.env_name, render_mode='human')
+    cfg.render_mode = 'human'
+    env = make_env(cfg)
     test(env, agent, cfg)

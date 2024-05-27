@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import math
 from torch.nn import functional as F
-
+import os
 
 # 正交初始化
 def orthogonal_init(layer, gain=np.sqrt(2)):
@@ -273,4 +273,46 @@ class MLPRNN(nn.Module):
         rnn_out, rnn_state = self.rnn(x, rnn_state)
         out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         return out, rnn_state
+            
+            
+class ModelLoader:
+    def __init__(self, model, optimizer, scheduler, save_path='./checkpoints/model.pth'):
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.save_path = save_path
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.makedirs(os.path.dirname(save_path))
 
+    def save_model(self, **kwargs):
+        state = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+        }
+        state.update(kwargs)
+        torch.save(state, self.save_path)
+        self._print_model_summary()
+        print(f"Model saved to {self.save_path}")
+
+
+    def load_model(self, extra_names: list[str]):
+        checkpoint = torch.load(self.save_path)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        for key in extra_names:
+            if f'{key}_state_dict' in checkpoint and hasattr(self, key):
+                getattr(self, key).load_state_dict(checkpoint[f'{key}_state_dict'])
+            elif key in checkpoint:
+                setattr(self, key, checkpoint[key])
+
+        print(f"Model loaded from {self.save_path}")
+    
+    
+    def _print_model_summary(self):
+        num_params = sum(p.numel() for p in self.model.parameters())
+        print(f"Model Summary: Number of parameters: {num_params}")
+        for name, param in self.model.named_parameters():
+            print(f"{name}: {param.numel()} parameters")
