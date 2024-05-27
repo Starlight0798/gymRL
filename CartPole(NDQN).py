@@ -43,12 +43,12 @@ class DQN(ModelLoader):
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
-        self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.cfg = cfg
         self.learn_step = 0
         self.predict_step = 0
         self.lr = cfg.lr_start
-        super().__init__(self.net, self.optim, self.scheduler, save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
+        super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):

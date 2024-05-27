@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.unwrapped = True
         self.max_steps = 1500
         self.algo_name = 'PPO'
-        self.train_eps = 3000
+        self.train_eps = 10
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -60,13 +60,13 @@ class PPO(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
-        self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
-        self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
-        super().__init__(self.net, self.optim, self.scheduler, save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
+        super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -139,10 +139,10 @@ class PPO(ModelLoader):
                     entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.ent_coef * entropy_loss
 
-                self.optim.zero_grad()
+                self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                self.scaler.step(self.optim)
+                self.scaler.step(self.optimizer)
                 self.scaler.update()
 
                 losses[0] += loss.item()
@@ -169,16 +169,7 @@ if __name__ == '__main__':
     cfg = Config()
     env = make_env(cfg)
     agent = PPO(cfg)
-    
-    if cfg.load_model:
-        try:
-            agent.load_model(extra_names=['ent_coef', 'learn_step'])
-        except FileNotFoundError:
-            print("No saved model found. Starting training from scratch.")
-            
     train(env, agent, cfg)
-    agent.save_model(learn_step=agent.learn_step, ent_coef=agent.ent_coef)
-    
     cfg.render_mode = 'human'
     env = make_env(cfg)
     test(env, agent, cfg)

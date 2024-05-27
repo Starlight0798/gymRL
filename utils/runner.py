@@ -77,19 +77,23 @@ def make_env(cfg):
 
 def train(env, agent, cfg):
     print('开始训练!')
+    if cfg.load_model:
+        agent.load_model()
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
-    reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
-    state_norm = Normalization(shape=cfg.n_states)
+    if cfg.use_reward_scale:
+        agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
+    if cfg.use_state_norm:
+        agent.state_norm = Normalization(shape=cfg.n_states)
     cfg.show()
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}')
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=cfg.seed)
         if cfg.use_reward_scale:
-            reward_scale.reset()
+            agent.reward_scale.reset()
         if cfg.use_state_norm:
-            state = state_norm(state)
+            state = agent.state_norm(state)
         if use_rnn:
             agent.net.reset_hidden()
         for _ in range(cfg.max_steps):
@@ -101,10 +105,10 @@ def train(env, agent, cfg):
                 input_action = action
             next_state, reward, terminated, truncated, info = env.step(input_action)
             if cfg.use_state_norm:
-                next_state = state_norm(next_state)
+                next_state = agent.state_norm(next_state)
             ep_reward += reward
             if cfg.use_reward_scale:
-                reward = reward_scale(reward)[0]
+                reward = agent.reward_scale(reward)[0]
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
             state = next_state
@@ -121,19 +125,20 @@ def train(env, agent, cfg):
             for key, value in monitors.items():
                 if not np.isnan(value):
                     writer.add_scalar(f'train/{key}', value, global_step=agent.learn_step)
-            writer.add_scalar('train/lr', agent.optim.param_groups[0]['lr'], global_step=agent.learn_step)
+            writer.add_scalar('train/lr', agent.optimizer.param_groups[0]['lr'], global_step=agent.learn_step)
         writer.add_scalar('train/reward', ep_reward, global_step=i)
         writer.add_scalar('train/step', ep_step, global_step=i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
         
         if (i + 1) % cfg.eval_freq == 0:
-            tools = {'writer': writer, 'state_norm': state_norm}
+            tools = {'writer': writer}
             evaluate(env, agent, cfg, tools)
             
         if (i + 1) % 100 == 0:
-            agent.save_model(learn_step=agent.learn_step, ent_coef=getattr(agent, 'ent_coef', None))    
+            agent.save_model()    
             
     print('完成训练!')
+    agent.save_model()
     env.close()
     writer.close()
 
@@ -143,9 +148,9 @@ def evaluate(env, agent, cfg, tools):
     state, _ = env.reset(seed=cfg.seed)
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
-    writer, state_norm = tools['writer'], tools['state_norm']
+    writer = tools['writer']
     if cfg.use_state_norm:
-        state = state_norm(state, update=False)
+        state = agent.state_norm(state, update=False)
     if use_rnn:
         agent.net.reset_hidden()
     for _ in range(cfg.max_steps):
@@ -157,7 +162,7 @@ def evaluate(env, agent, cfg, tools):
             input_action = action
         next_state, reward, terminated, truncated, _ = env.step(input_action)
         if cfg.use_state_norm:
-            next_state = state_norm(next_state, update=False)
+            next_state = agent.state_norm(next_state, update=False)
         state = next_state
         ep_reward += reward
         if terminated or truncated:
@@ -169,25 +174,26 @@ def evaluate(env, agent, cfg, tools):
 
 def test(env, agent, cfg):
     print('开始测试!')
+    if cfg.load_model:
+        agent.load_model()
     use_rnn = hasattr(agent.net, 'reset_hidden')
-    use_state_norm = hasattr(agent, 'state_norm')
-    use_acttion_fix = hasattr(agent, 'fix_action')
+    use_action_fix = hasattr(agent, 'fix_action')
     for i in range(cfg.test_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=cfg.seed)
-        if use_state_norm:
+        if cfg.use_state_norm:
             state = agent.state_norm(state, update=False)
         if use_rnn:
             agent.net.reset_hidden()
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.evaluate(state)
-            if use_acttion_fix:
+            if use_action_fix:
                 input_action = agent.fix_action(action)
             else:
                 input_action = action
             next_state, reward, terminated, truncated, _ = env.step(input_action)
-            if use_state_norm:
+            if cfg.use_state_norm:
                 next_state = agent.state_norm(next_state, update=False)
             state = next_state
             ep_reward += reward

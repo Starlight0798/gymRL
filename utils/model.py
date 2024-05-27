@@ -276,43 +276,41 @@ class MLPRNN(nn.Module):
             
             
 class ModelLoader:
-    def __init__(self, model, optimizer, scheduler, save_path='./checkpoints/model.pth'):
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
+    def __init__(self, save_path='./checkpoints/model.pth'):
         self.save_path = save_path
         if not os.path.exists(os.path.dirname(save_path)):
             os.makedirs(os.path.dirname(save_path))
 
-    def save_model(self, **kwargs):
-        state = {
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
-        }
-        state.update(kwargs)
+    def save_model(self):
+        state = {}
+        for key, value in self.__dict__.items():
+            if hasattr(value, 'state_dict'):
+                state[f'{key}_state_dict'] = value.state_dict()
+            else:
+                state[key] = value
         torch.save(state, self.save_path)
         self._print_model_summary()
-        print(f"Model saved to {self.save_path}")
+        print(f"模型保存到 {self.save_path}")
 
+    def load_model(self):
+        try:
+            checkpoint = torch.load(self.save_path)
+            for key, value in checkpoint.items():
+                if key.endswith('_state_dict'):
+                    attr_name = key.replace('_state_dict', '')
+                    if hasattr(self, attr_name):
+                        getattr(self, attr_name).load_state_dict(value)
+                else:
+                    setattr(self, key, value)
 
-    def load_model(self, extra_names: list[str]):
-        checkpoint = torch.load(self.save_path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print(f"模型加载： {self.save_path}")
+        except FileNotFoundError as e:
+            print(f'模型加载失败：{str(e)}')   
+            
 
-        for key in extra_names:
-            if f'{key}_state_dict' in checkpoint and hasattr(self, key):
-                getattr(self, key).load_state_dict(checkpoint[f'{key}_state_dict'])
-            elif key in checkpoint:
-                setattr(self, key, checkpoint[key])
-
-        print(f"Model loaded from {self.save_path}")
-    
-    
     def _print_model_summary(self):
-        num_params = sum(p.numel() for p in self.model.parameters())
-        print(f"Model Summary: Number of parameters: {num_params}")
-        for name, param in self.model.named_parameters():
-            print(f"{name}: {param.numel()} parameters")
+        if hasattr(self, 'model'):
+            num_params = sum(p.numel() for p in self.model.parameters())
+            print(f"Model Summary: Number of parameters: {num_params}")
+            for name, param in self.model.named_parameters():
+                print(f"{name}: {param.numel()} parameters")

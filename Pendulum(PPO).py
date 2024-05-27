@@ -58,13 +58,13 @@ class PPO(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
-        self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
-        self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
-        super().__init__(self.net, self.optim, self.scheduler, save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
+        super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -146,10 +146,10 @@ class PPO(ModelLoader):
                     entropy_loss = -torch.mean(actor_prob.entropy())
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.ent_coef * entropy_loss
 
-                self.optim.zero_grad()
+                self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                self.scaler.step(self.optim)
+                self.scaler.step(self.optimizer)
                 self.scaler.update()
 
                 losses[0] += loss.item()
