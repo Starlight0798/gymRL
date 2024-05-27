@@ -118,6 +118,7 @@ class ConvBlock(nn.Module):
                  stride=1,
                  padding=2,
                  use_depthwise=True,
+                 activation=nn.PReLU()
                  ):
         super(ConvBlock, self).__init__()
         self.conv_layers = nn.Sequential()
@@ -135,7 +136,7 @@ class ConvBlock(nn.Module):
                                                                    stride,
                                                                    padding))
             self.conv_layers.add_module(f'bn_{i}', nn.BatchNorm2d(out_channels))
-            self.conv_layers.add_module(f'relu_{i}', nn.ReLU())
+            self.conv_layers.add_module(f'act_{i}', activation)
             self.conv_layers.add_module(f'pool_{i}', nn.MaxPool2d(kernel_size=(2, 2)))
             
         self.output_dim = output_dim

@@ -30,7 +30,7 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = False
+        self.load_model = True
         self.use_atari = True
         self.save_freq = 50
 
@@ -39,14 +39,15 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
         self.device = cfg.device
         self.conv_layer = ConvBlock(
-            channels=[(3, 32), (32, 64), (64, 32)],
-            output_dim=256
+            channels=[(3, 16), (16, 32), (32, 16)],
+            output_dim=256,
+            input_shape=(3, 84, 84),
         )
-        self.fc_head = PSCN(256, 128)
-        self.rnn = MLPRNN(128, 128, batch_first=True)
-        self.rnn_h = torch.zeros(1, 32, device=self.device)
-        self.actor_fc = MLP([128, 32, cfg.n_actions])
-        self.critic_fc = MLP([128, 32, 1])
+        self.fc_head = PSCN(256, 256)
+        self.rnn = MLPRNN(256, 256, batch_first=True)
+        self.rnn_h = torch.zeros(1, 64, device=self.device)
+        self.actor_fc = MLP([256, 32, cfg.n_actions])
+        self.critic_fc = MLP([256, 32, 1])
 
     def forward(self, s):
         feature = self.conv_layer(s)
@@ -58,7 +59,7 @@ class ActorCritic(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 32, device=self.device)
+        self.rnn_h = torch.zeros(1, 64, device=self.device)
 
 class PPO(ModelLoader):
     def __init__(self, cfg):
