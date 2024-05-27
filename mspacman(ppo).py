@@ -4,7 +4,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN, ModelLoader, ConvMixer
+from utils.model import MLP, PSCN, MLPRNN, ModelLoader, ConvBlock
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
@@ -38,7 +38,10 @@ class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
         self.device = cfg.device
-        self.conv_layer = ConvMixer(output = 256, dim = 256, depth = 5)
+        self.conv_layer = ConvBlock(
+            channels=[(3, 32), (32, 64), (64, 32)],
+            output_dim=256
+        )
         self.fc_head = PSCN(256, 128)
         self.rnn = MLPRNN(128, 128, batch_first=True)
         self.rnn_h = torch.zeros(1, 32, device=self.device)

@@ -112,6 +112,8 @@ class DepthwiseSeparableConv(nn.Module):
 class ConvBlock(nn.Module):
     def __init__(self,
                  channels: list[tuple],
+                 output_dim=128,
+                 input_shape=(3, 84, 84),
                  kernel_size=3,
                  stride=1,
                  padding=2,
@@ -135,9 +137,29 @@ class ConvBlock(nn.Module):
             self.conv_layers.add_module(f'bn_{i}', nn.BatchNorm2d(out_channels))
             self.conv_layers.add_module(f'relu_{i}', nn.ReLU())
             self.conv_layers.add_module(f'pool_{i}', nn.MaxPool2d(kernel_size=(2, 2)))
+            
+        self.output_dim = output_dim
+        self._initialize_fc(input_shape, channels)
+
+
+    def _initialize_fc(self, input_shape, channels):
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, *input_shape)
+            x = dummy_input
+            for layer in self.conv_layers:
+                x = layer(x)
+            n_features = x.size(1) * x.size(2) * x.size(3)
+            self.fc = MLP([n_features, self.output_dim])
+            print(f'卷积输出维度：{n_features}')
+
 
     def forward(self, x):
-        return self.conv_layers(x)
+        x = self.conv_layers(x)
+        x = torch.flatten(x, 1) 
+        x = self.fc(x)
+        return x
+
+
 
 
 # 多头注意力机制
