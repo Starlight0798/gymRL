@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 500
+        self.max_steps = 300
         self.algo_name = 'PPO'
         self.train_eps = 2000
         self.batch_size = 512
@@ -58,7 +58,7 @@ class PPO(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
-        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
