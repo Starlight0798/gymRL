@@ -4,6 +4,7 @@ import torch
 import random
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
+from utils.normalization import Normalization, RewardScaling
 
 class BasicConfig:
     def __init__(self):
@@ -23,6 +24,8 @@ class BasicConfig:
         self.action_bound = None
         self.use_atari = False
         self.unwrapped = False
+        self.use_state_norm = False
+        self.use_reward_scale = False
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -78,33 +81,33 @@ def make_env_agent(cfg, Algorithm):
 def train(env, agent, cfg):
     print('开始训练!')
     use_rnn = hasattr(agent.net, 'reset_hidden')
-    use_reward_scale = hasattr(agent, 'reward_scaling')
-    use_state_norm = hasattr(agent, 'state_norm')
-    use_acttion_fix = hasattr(agent, 'fix_action')
+    use_action_fix = hasattr(agent, 'fix_action')
+    reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
+    state_norm = Normalization(shape=cfg.n_states)
     cfg.show()
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}')
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=cfg.seed)
-        if use_reward_scale:
-            agent.reward_scaling.reset()
-        if use_state_norm:
-            state = agent.state_norm(state)
+        if cfg.use_reward_scale:
+            reward_scale.reset()
+        if cfg.use_state_norm:
+            state = state_norm(state)
         if use_rnn:
             agent.net.reset_hidden()
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.choose_action(state)
-            if use_acttion_fix:
+            if use_action_fix:
                 input_action = agent.fix_action(action)
             else:
                 input_action = action
             next_state, reward, terminated, truncated, info = env.step(input_action)
-            if use_state_norm:
-                next_state = agent.state_norm(next_state)
+            if cfg.use_state_norm:
+                next_state = state_norm(next_state)
             ep_reward += reward
-            if use_reward_scale:
-                reward = agent.reward_scaling(reward)[0]
+            if cfg.use_reward_scale:
+                reward = reward_scale(reward)[0]
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
             state = next_state
@@ -126,32 +129,33 @@ def train(env, agent, cfg):
         writer.add_scalar('train/step', ep_step, global_step=i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
         if (i + 1) % cfg.eval_freq == 0:
-            evaluate(env, agent, cfg, writer)
+            tools = {'writer': writer, 'state_norm': state_norm}
+            evaluate(env, agent, cfg, tools)
     print('完成训练!')
     env.close()
     writer.close()
 
 
-def evaluate(env, agent, cfg, writer):
+def evaluate(env, agent, cfg, tools):
     ep_reward, ep_step = 0.0, 0
     state, _ = env.reset(seed=cfg.seed)
     use_rnn = hasattr(agent.net, 'reset_hidden')
-    use_state_norm = hasattr(agent, 'state_norm')
-    use_acttion_fix = hasattr(agent, 'fix_action')
-    if use_state_norm:
-        state = agent.state_norm(state, update=False)
+    use_action_fix = hasattr(agent, 'fix_action')
+    writer, state_norm = tools['writer'], tools['state_norm']
+    if cfg.use_state_norm:
+        state = state_norm(state, update=False)
     if use_rnn:
         agent.net.reset_hidden()
     for _ in range(cfg.max_steps):
         ep_step += 1
         action = agent.evaluate(state)
-        if use_acttion_fix:
+        if use_action_fix:
             input_action = agent.fix_action(action)
         else:
             input_action = action
         next_state, reward, terminated, truncated, _ = env.step(input_action)
-        if use_state_norm:
-            next_state = agent.state_norm(next_state, update=False)
+        if cfg.use_state_norm:
+            next_state = state_norm(next_state, update=False)
         state = next_state
         ep_reward += reward
         if terminated or truncated:

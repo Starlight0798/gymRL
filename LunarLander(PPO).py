@@ -3,7 +3,6 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
-from utils.normalization import Normalization, RewardScaling
 from torch.utils.data import BatchSampler, SubsetRandomSampler
 from utils.model import MLP, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
@@ -32,6 +31,8 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
+        self.use_reward_scale = True
+        self.use_state_norm = True
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
@@ -61,8 +62,6 @@ class PPO:
         self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
         self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
-        self.state_norm = Normalization(shape=cfg.n_states)
-        self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()

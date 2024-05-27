@@ -5,7 +5,6 @@ from torch.nn import functional as F
 from utils.model import MLP, NoisyLinear
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
-from utils.normalization import Normalization, RewardScaling
 from torch.optim.lr_scheduler import ExponentialLR
 
 class Config(BasicConfig):
@@ -19,6 +18,8 @@ class Config(BasicConfig):
         self.preload_size = 256
         self.memory_capacity = 10000
         self.target_update = 400
+        self.use_reward_scale = True
+        self.use_state_norm = True
 
 class DQNnet(nn.Module):
     def __init__(self, cfg):
@@ -43,8 +44,6 @@ class DQN:
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
         self.scheduler = ExponentialLR(self.optimizer, gamma=cfg.gamma)
         self.cfg = cfg
-        self.state_norm = Normalization(shape=cfg.n_states)
-        self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
         self.learn_step = 0
         self.predict_step = 0
         self.lr = cfg.lr_start
