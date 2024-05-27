@@ -9,7 +9,7 @@ from utils.model import MLP, PSCN, MLPRNN
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, make_env_agent, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
     def __init__(self):
@@ -19,7 +19,7 @@ class Config(BasicConfig):
         self.unwrapped = True
         self.max_steps = 1000
         self.algo_name = 'PPO'
-        self.train_eps = 500
+        self.train_eps = 3000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -27,6 +27,7 @@ class Config(BasicConfig):
         self.dual_clip = 3.0
         self.val_coef = 0.5
         self.lr_start = 1e-3
+        self.lr_end = 1e-5
         self.ent_coef_start = 1e-2
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
@@ -58,7 +59,7 @@ class PPO:
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optim = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5)
-        self.scheduler = ExponentialLR(self.optim, gamma=cfg.gamma)
+        self.scheduler = CosineAnnealingLR(self.optim, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.state_norm = Normalization(shape=cfg.n_states)
         self.reward_scaling = RewardScaling(shape=1, gamma=cfg.gamma)
