@@ -18,7 +18,6 @@ class BasicConfig:
         self.param_update_freq = 5
         self.gamma = 0.99
         self.lamda = 0.95
-        self.seed = random.randint(0, 100)
         self.n_states = None
         self.n_actions = None
         self.action_bound = None
@@ -79,17 +78,18 @@ def train(env, agent, cfg):
     print('开始训练!')
     if cfg.load_model:
         agent.load_model()
+    else:
+        if cfg.use_reward_scale:
+            agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
+        if cfg.use_state_norm:
+            agent.state_norm = Normalization(shape=cfg.n_states)
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
-    if cfg.use_reward_scale:
-        agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
-    if cfg.use_state_norm:
-        agent.state_norm = Normalization(shape=cfg.n_states)
     cfg.show()
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}')
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
-        state, _ = env.reset(seed=cfg.seed)
+        state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
         if cfg.use_reward_scale:
             agent.reward_scale.reset()
         if cfg.use_state_norm:
@@ -145,7 +145,7 @@ def train(env, agent, cfg):
 
 def evaluate(env, agent, cfg, tools):
     ep_reward, ep_step = 0.0, 0
-    state, _ = env.reset(seed=cfg.seed)
+    state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
     writer = tools['writer']
@@ -174,13 +174,12 @@ def evaluate(env, agent, cfg, tools):
 
 def test(env, agent, cfg):
     print('开始测试!')
-    if cfg.load_model:
-        agent.load_model()
+    agent.load_model()
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
     for i in range(cfg.test_eps):
         ep_reward, ep_step = 0.0, 0
-        state, _ = env.reset(seed=cfg.seed)
+        state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
         if cfg.use_state_norm:
             state = agent.state_norm(state, update=False)
         if use_rnn:

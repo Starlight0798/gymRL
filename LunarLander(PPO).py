@@ -16,9 +16,9 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 1500
+        self.max_steps = 500
         self.algo_name = 'PPO'
-        self.train_eps = 3000
+        self.train_eps = 2000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -168,6 +168,9 @@ if __name__ == '__main__':
     env = make_env(cfg)
     agent = PPO(cfg)
     train(env, agent, cfg)
+    
+    cfg = Config()
     cfg.render_mode = 'human'
     env = make_env(cfg)
+    agent = PPO(cfg)
     test(env, agent, cfg)
