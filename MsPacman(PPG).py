@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'MsPacmanDeterministic-v4'
         self.render_mode = 'rgb_array'
         self.max_steps = 1000
-        self.algo_name = 'PPO'
+        self.algo_name = 'PPG'
         self.train_eps = 15000
         self.batch_size = 512
         self.mini_batch = 16
@@ -33,6 +33,8 @@ class Config(BasicConfig):
         self.load_model = True
         self.use_atari = True
         self.save_freq = 50
+        self.aux_epochs = 6
+        
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
@@ -56,7 +58,7 @@ class ActorCritic(BaseRNNModel):
         return prob, value
 
 
-class PPO(ModelLoader):
+class PPG(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
@@ -84,12 +86,9 @@ class PPO(ModelLoader):
         action = m.probs.argmax().item()
         return action
 
-    def update(self):
-        if self.memory.size < self.cfg.batch_size:
-            return {}
+    def policy_update(self):
         states, actions, rewards, next_states, dones = self.memory.sample()
-        actions, rewards, dones = actions.view(-1, 1).type(torch.long), \
-            rewards.view(-1, 1), dones.view(-1, 1)
+        actions, rewards, dones = actions.view(-1, 1).type(torch.long), rewards.view(-1, 1), dones.view(-1, 1)
 
         with autocast():
             self.net.reset_hidden()
@@ -110,11 +109,10 @@ class PPO(ModelLoader):
                 adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
                 v_target = adv + v
 
-        losses = np.zeros(5)
+        policy_losses = np.zeros(5)
 
         for _ in range(self.cfg.epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch,
-                                        drop_last=False):
+            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
                 with autocast():
                     self.net.reset_hidden()
                     actor_prob, value = self.net(states[indices])
@@ -139,36 +137,70 @@ class PPO(ModelLoader):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
-                losses[0] += loss.item()
-                losses[1] += clip_loss.item()
-                losses[2] += value_loss.item()
-                losses[3] += entropy_loss.item()
-                
-            
+                policy_losses[0] += loss.item()
+                policy_losses[1] += clip_loss.item()
+                policy_losses[2] += value_loss.item()
+                policy_losses[3] += entropy_loss.item()
+
+        return {
+            'total_loss': policy_losses[0] / self.cfg.epochs,
+            'clip_loss': policy_losses[1] / self.cfg.epochs,
+            'policy_value_loss': policy_losses[2] / self.cfg.epochs,
+            'entropy_loss': policy_losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'advantage': adv.mean().item(),
+            'lr': self.optimizer.param_groups[0]['lr']
+        }
+
+    def auxiliary_update(self):
+        states, actions, rewards, next_states, dones = self.memory.sample()
+        with torch.no_grad():
+            self.net.reset_hidden()
+            _, v_target = self.net(states)
+
+        aux_losses = np.zeros(1)
+
+        for _ in range(self.cfg.aux_epochs):
+            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
+                with autocast():
+                    self.net.reset_hidden()
+                    _, v = self.net(states[indices])
+                    value_loss = F.mse_loss(v_target[indices], v)
+
+                self.optimizer.zero_grad()
+                self.scaler.scale(value_loss).backward()
+                nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                aux_losses[0] += value_loss.item()
+
+        return {
+            'aux_value_loss': aux_losses[0] / self.cfg.aux_epochs
+        }
+
+    def update(self):
+        if self.memory.size < self.cfg.batch_size:
+            return {}
+        
+        policy_losses = self.policy_update()
+        aux_losses = self.auxiliary_update()
+        
         self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        return {
-            'total_loss': losses[0] / self.cfg.epochs,
-            'clip_loss': losses[1] / self.cfg.epochs,
-            'value_loss': losses[2] / self.cfg.epochs,
-            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
-            'advantage': adv.mean().item(),
-            'lr': self.optimizer.param_groups[0]['lr'],
-            'ent_coef': self.ent_coef
-        }
+        return {**policy_losses, **aux_losses, 'ent_coef': self.ent_coef}
 
 if __name__ == '__main__':
     cfg = Config()
     env = make_env(cfg)
-    agent = PPO(cfg)
+    agent = PPG(cfg)
     train(env, agent, cfg)
     
     cfg = Config()
     cfg.render_mode = 'human'
     env = make_env(cfg)
-    agent = PPO(cfg)
+    agent = PPG(cfg)
     test(env, agent, cfg)
