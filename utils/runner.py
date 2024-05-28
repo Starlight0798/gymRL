@@ -55,7 +55,6 @@ def log_monitors(writer, monitors, agent, phase, step):
     for key, value in monitors.items():
         if not np.isnan(value):
             writer.add_scalar(f'{phase}/{key}', value, global_step=step)
-    writer.add_scalar(f'{phase}/lr', agent.optimizer.param_groups[0]['lr'], global_step=step)
 
 
 def make_env(cfg):
@@ -108,8 +107,7 @@ def train(env, agent, cfg):
             if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.full():
                 state, agent.net.rnn_h = agent.load_state()
             else:
-                state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
-                
+                state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
                 
         if cfg.use_reward_scale:
             agent.reward_scale.reset()
@@ -146,8 +144,7 @@ def train(env, agent, cfg):
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)
             
-        writer.add_scalar('train/reward', ep_reward, global_step=i)
-        writer.add_scalar('train/step', ep_step, global_step=i)
+        log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'train', i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
         
         if (i + 1) % cfg.eval_freq == 0:
