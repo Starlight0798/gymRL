@@ -47,6 +47,13 @@ class PyTorchFrame(gym.ObservationWrapper):
 
     def observation(self, observation):
         return np.rollaxis(observation, 2)
+    
+    
+def log_monitors(writer, monitors, agent, phase, step):
+    for key, value in monitors.items():
+        if not np.isnan(value):
+            writer.add_scalar(f'{phase}/{key}', value, global_step=step)
+    writer.add_scalar(f'{phase}/lr', agent.optimizer.param_groups[0]['lr'], global_step=step)
 
 
 def make_env(cfg):
@@ -85,10 +92,12 @@ def train(env, agent, cfg):
         agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
     if cfg.use_state_norm and not hasattr(agent, "state_norm"):
         agent.state_norm = Normalization(shape=env.observation_space.shape)
+        
     use_rnn = hasattr(agent.net, 'reset_hidden')
     cfg.show()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
+    
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
@@ -112,18 +121,13 @@ def train(env, agent, cfg):
             state = next_state
             if not use_rnn:
                 monitors = agent.update()
-                for key, value in monitors.items():
-                    if not np.isnan(value):
-                        writer.add_scalar(f'train/{key}', value, global_step=agent.learn_step)
-                writer.add_scalar('train/lr', agent.lr, global_step=agent.learn_step)
+                log_monitors(writer, monitors, agent, 'train', agent.learn_step)
             if done:
                 break
         if use_rnn:
             monitors = agent.update()
-            for key, value in monitors.items():
-                if not np.isnan(value):
-                    writer.add_scalar(f'train/{key}', value, global_step=agent.learn_step)
-            writer.add_scalar('train/lr', agent.optimizer.param_groups[0]['lr'], global_step=agent.learn_step)
+            log_monitors(writer, monitors, agent, 'train', agent.learn_step)
+            
         writer.add_scalar('train/reward', ep_reward, global_step=i)
         writer.add_scalar('train/step', ep_step, global_step=i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')

@@ -19,7 +19,7 @@ class Config(BasicConfig):
         self.max_steps = 300
         self.algo_name = 'PPG'
         self.train_eps = 2000
-        self.batch_size = 1024
+        self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
@@ -146,7 +146,8 @@ class PPG(ModelLoader):
             'clip_loss': policy_losses[1] / self.cfg.epochs,
             'policy_value_loss': policy_losses[2] / self.cfg.epochs,
             'entropy_loss': policy_losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
-            'advantage': adv.mean().item()
+            'advantage': adv.mean().item(),
+            'lr': self.optimizer.param_groups[0]['lr']
         }
 
     def auxiliary_update(self):
@@ -178,14 +179,7 @@ class PPG(ModelLoader):
 
     def update(self):
         if self.memory.size < self.cfg.batch_size:
-            return {
-                'total_loss': np.nan,
-                'clip_loss': np.nan,
-                'policy_value_loss': np.nan,
-                'entropy_loss': np.nan,
-                'advantage': np.nan,
-                'aux_value_loss': np.nan
-            }
+            return {}
         
         policy_losses = self.policy_update()
         aux_losses = self.auxiliary_update()

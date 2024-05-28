@@ -61,7 +61,7 @@ class DQN(ModelLoader):
 
     def update(self):
         if self.memory.size < self.cfg.preload_size:
-            return {'loss': 0.0, 'q_target': 0.0}
+            return {}
         states, actions, rewards, next_states, dones = self.memory.sample()
         actions, rewards, dones = actions.view(-1, 1).type(torch.long), rewards.view(-1, 1), \
             dones.view(-1, 1)
@@ -86,7 +86,8 @@ class DQN(ModelLoader):
 
         return {
             'loss': loss.item(),
-            'q_target': q_target.mean().item()
+            'q_target': q_target.mean().item(),
+            'lr': self.optimizer.param_groups[0]['lr']
         }
 
 

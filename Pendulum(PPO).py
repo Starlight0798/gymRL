@@ -88,13 +88,7 @@ class PPO(ModelLoader):
 
     def update(self):
         if self.memory.size < self.cfg.batch_size:
-            return {
-                'total_loss': np.nan,
-                'clip_loss': np.nan,
-                'value_loss': np.nan,
-                'entropy_loss': np.nan,
-                'advantage': np.nan
-            }
+            return {}
         states, actions, rewards, next_states, dones = self.memory.sample()
         rewards, dones = rewards.view(-1, 1), dones.view(-1, 1)
         if actions.ndim == 1:
@@ -166,7 +160,8 @@ class PPO(ModelLoader):
             'clip_loss': losses[1] / self.cfg.epochs,
             'value_loss': losses[2] / self.cfg.epochs,
             'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
-            'advantage': adv.mean().item()
+            'advantage': adv.mean().item(),
+            'lr': self.optimizer.param_groups[0]['lr']
         }
 
 if __name__ == '__main__':
