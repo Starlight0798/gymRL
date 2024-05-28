@@ -1,4 +1,6 @@
 gym
 gymnasium
+gymnasium[atari]
+gymnasium[accept-rom-license]
 torch
 numpy
