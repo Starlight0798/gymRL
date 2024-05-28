@@ -104,7 +104,7 @@ def train(env, agent, cfg):
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.full():
+            if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.is_full():
                 state, agent.net.rnn_h = agent.load_state()
             else:
                 state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
@@ -137,7 +137,7 @@ def train(env, agent, cfg):
             if done:
                 break
             
-            if use_rnn and ep_step % 10 == 0:
+            if cfg.state_replay and use_rnn and ep_step % 10 == 0:
                 agent.save_state(state, agent.net.rnn_h)
             
         if use_rnn:

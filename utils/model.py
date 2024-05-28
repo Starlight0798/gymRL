@@ -4,7 +4,6 @@ import numpy as np
 import math
 from torch.nn import functional as F
 import os
-from queue import Queue
 
 # 正交初始化
 def orthogonal_init(layer, gain=np.sqrt(2)):
@@ -356,21 +355,46 @@ class ConvMixer(nn.Module):
             x = ConvMixer_block(x)
         x = self.head(x)
         return x
-            
+
+
+# numpy实现环形队列存储
+class Queue:
+    def __init__(self, buffer_size):
+        self.buffer_size = buffer_size
+        self.buffer = np.empty(buffer_size, dtype=object)
+        self.index = 0
+        self.filled = False
+
+    def put(self, item):
+        self.buffer[self.index] = item
+        self.index = (self.index + 1) % self.buffer_size
+        if self.index == 0:
+            self.filled = True
+
+    def sample(self):
+        if not self.filled and self.index == 0:
+            raise ValueError('Queue is empty!')
+        max_index = self.buffer_size if self.filled else self.index
+        idx = np.random.randint(0, max_index)
+        return self.buffer[idx]
+
+    def is_empty(self):
+        return not self.filled and self.index == 0
+
+    def is_full(self):
+        return self.filled
 
 # 管理模型加载与存储
 class ModelLoader:
     def __init__(self, save_path='./checkpoints/model.pth', buffer_size=1000):
         self.save_path = save_path
-        self.state_buffer = Queue(maxsize=buffer_size)
+        self.state_buffer = Queue(buffer_size)
         if not os.path.exists(os.path.dirname(save_path)):
             os.makedirs(os.path.dirname(save_path))
 
     def save_model(self):
         state = {}
         for key, value in self.__dict__.items():
-            if key == 'state_buffer':
-                continue
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
             else:
@@ -389,20 +413,15 @@ class ModelLoader:
                         getattr(self, attr_name).load_state_dict(value)
                 else:
                     setattr(self, key, value)
-
             print(f"模型加载： {self.save_path}")
         except FileNotFoundError as e:
             print(f'模型加载失败：{str(e)}')   
             
     def save_state(self, state, hidden_state):
-        if self.state_buffer.full():
-            self.state_buffer.get()
         self.state_buffer.put((state, hidden_state))
 
     def load_state(self):
-        if not self.state_buffer.empty():
-            return self.state_buffer.get()
-        return None
+        return self.state_buffer.sample()
             
     def _print_model_summary(self):
         if hasattr(self, 'model'):
