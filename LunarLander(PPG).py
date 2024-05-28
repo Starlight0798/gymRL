@@ -31,7 +31,7 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = False
+        self.load_model = True
         self.aux_epochs = 6  
 
 
@@ -178,6 +178,16 @@ class PPG(ModelLoader):
         }
 
     def update(self):
+        if self.memory.size < self.cfg.batch_size:
+            return {
+                'total_loss': np.nan,
+                'clip_loss': np.nan,
+                'policy_value_loss': np.nan,
+                'entropy_loss': np.nan,
+                'advantage': np.nan,
+                'aux_value_loss': np.nan
+            }
+        
         policy_losses = self.policy_update()
         aux_losses = self.auxiliary_update()
         
