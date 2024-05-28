@@ -4,7 +4,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN, ModelLoader, ConvBlock
+from utils.model import MLP, PSCN, MLPRNN, ModelLoader
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
@@ -13,11 +13,12 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
-        self.env_name = 'MsPacmanDeterministic-v4'
+        self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
-        self.max_steps = 500
-        self.algo_name = 'PPO'
-        self.train_eps = 15000
+        self.unwrapped = True
+        self.max_steps = 300
+        self.algo_name = 'PPG'
+        self.train_eps = 2000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -30,28 +31,22 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = True
-        self.use_atari = True
-        self.save_freq = 50
+        self.load_model = False
+        self.aux_epochs = 6  
+
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
         self.device = cfg.device
-        self.conv_layer = ConvBlock(
-            channels=[(3, 16), (16, 32), (32, 16)],
-            output_dim=256,
-            input_shape=(3, 84, 84),
-        )
-        self.fc_head = PSCN(256, 256)
-        self.rnn = MLPRNN(256, 256, batch_first=True)
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
-        self.actor_fc = MLP([256, 32, cfg.n_actions])
-        self.critic_fc = MLP([256, 32, 1])
+        self.fc_head = PSCN(cfg.n_states, 128)
+        self.rnn = MLPRNN(128, 128, batch_first=True)
+        self.rnn_h = torch.zeros(1, 32, device=self.device)
+        self.actor_fc = MLP([128, cfg.n_actions])
+        self.critic_fc = MLP([128, 16, 1])
 
     def forward(self, s):
-        feature = self.conv_layer(s)
-        x = self.fc_head(feature)
+        x = self.fc_head(s)
         out, self.rnn_h = self.rnn(x, self.rnn_h)
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)
@@ -59,9 +54,10 @@ class ActorCritic(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
+        self.rnn_h = torch.zeros(1, 32, device=self.device)
 
-class PPO(ModelLoader):
+
+class PPG(ModelLoader):
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
@@ -71,6 +67,7 @@ class PPO(ModelLoader):
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
+        self.value_loss_fn = nn.MSELoss()
         super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
@@ -89,18 +86,9 @@ class PPO(ModelLoader):
         action = m.probs.argmax().item()
         return action
 
-    def update(self):
-        if self.memory.size < self.cfg.batch_size:
-            return {
-                'total_loss': np.nan,
-                'clip_loss': np.nan,
-                'value_loss': np.nan,
-                'entropy_loss': np.nan,
-                'advantage': np.nan
-            }
+    def policy_update(self):
         states, actions, rewards, next_states, dones = self.memory.sample()
-        actions, rewards, dones = actions.view(-1, 1).type(torch.long), \
-            rewards.view(-1, 1), dones.view(-1, 1)
+        actions, rewards, dones = actions.view(-1, 1).type(torch.long), rewards.view(-1, 1), dones.view(-1, 1)
 
         with autocast():
             self.net.reset_hidden()
@@ -121,11 +109,10 @@ class PPO(ModelLoader):
                 adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
                 v_target = adv + v
 
-        losses = np.zeros(5)
+        policy_losses = np.zeros(5)
 
         for _ in range(self.cfg.epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch,
-                                        drop_last=False):
+            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
                 with autocast():
                     self.net.reset_hidden()
                     actor_prob, value = self.net(states[indices])
@@ -140,7 +127,7 @@ class PPO(ModelLoader):
                         torch.max(min_surr, self.cfg.dual_clip * adv[indices]),
                         min_surr
                     ))
-                    value_loss = F.mse_loss(v_target[indices], value)
+                    value_loss = self.value_loss_fn(v_target[indices], value)
                     entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.ent_coef * entropy_loss
 
@@ -150,34 +137,66 @@ class PPO(ModelLoader):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
-                losses[0] += loss.item()
-                losses[1] += clip_loss.item()
-                losses[2] += value_loss.item()
-                losses[3] += entropy_loss.item()
-                
-            
+                policy_losses[0] += loss.item()
+                policy_losses[1] += clip_loss.item()
+                policy_losses[2] += value_loss.item()
+                policy_losses[3] += entropy_loss.item()
+
+        return {
+            'total_loss': policy_losses[0] / self.cfg.epochs,
+            'clip_loss': policy_losses[1] / self.cfg.epochs,
+            'policy_value_loss': policy_losses[2] / self.cfg.epochs,
+            'entropy_loss': policy_losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'advantage': adv.mean().item()
+        }
+
+    def auxiliary_update(self):
+        states, actions, rewards, next_states, dones = self.memory.sample()
+        with torch.no_grad():
+            self.net.reset_hidden()
+            _, v_target = self.net(states)
+
+        aux_losses = np.zeros(1)
+
+        for _ in range(self.cfg.aux_epochs):
+            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
+                with autocast():
+                    self.net.reset_hidden()
+                    _, v = self.net(states[indices])
+                    value_loss = self.value_loss_fn(v_target[indices], v)
+
+                self.optimizer.zero_grad()
+                self.scaler.scale(value_loss).backward()
+                nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                aux_losses[0] += value_loss.item()
+
+        return {
+            'aux_value_loss': aux_losses[0] / self.cfg.aux_epochs
+        }
+
+    def update(self):
+        policy_losses = self.policy_update()
+        aux_losses = self.auxiliary_update()
+        
         self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        return {
-            'total_loss': losses[0] / self.cfg.epochs,
-            'clip_loss': losses[1] / self.cfg.epochs,
-            'value_loss': losses[2] / self.cfg.epochs,
-            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
-            'advantage': adv.mean().item()
-        }
+        return {**policy_losses, **aux_losses}
 
 if __name__ == '__main__':
     cfg = Config()
     env = make_env(cfg)
-    agent = PPO(cfg)
+    agent = PPG(cfg)
     train(env, agent, cfg)
     
     cfg = Config()
     cfg.render_mode = 'human'
     env = make_env(cfg)
-    agent = PPO(cfg)
+    agent = PPG(cfg)
     test(env, agent, cfg)
