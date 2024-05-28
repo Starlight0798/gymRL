@@ -5,13 +5,19 @@ import math
 from torch.nn import functional as F
 import os
 
-# 正交初始化
-def orthogonal_init(layer, gain=np.sqrt(2)):
-    for name, param in layer.named_parameters():
-        if 'bias' in name:
-            nn.init.constant_(param, 0)
-        elif 'weight' in name:
-            nn.init.orthogonal_(param, gain=gain)
+def initialize_weights(layer, init_type='kaiming', nonlinearity='leaky_relu'):
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        if init_type == 'kaiming':                  # kaiming初始化，适合激活函数为ReLU, LeakyReLU, PReLU
+            nn.init.kaiming_uniform_(layer.weight, nonlinearity=nonlinearity)
+        elif init_type == 'xavier':
+            nn.init.xavier_uniform_(layer.weight)   # xavier初始化, 适合激活函数为tanh和sigmoid
+        elif init_type == 'orthogonal':
+            nn.init.orthogonal_(layer.weight, gain=sqrt(2))       # 正交初始化，适合激活函数为ReLU
+        else:       
+            raise ValueError(f"Unknown initialization type: {init_type}")
+        
+        if layer.bias is not None:
+            nn.init.constant_(layer.bias, 0)
     return layer
 
 
@@ -27,7 +33,7 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         layers = []
         for i in range(len(dim_list) - 1):
-            layer = orthogonal_init(linear(dim_list[i], dim_list[i + 1]))
+            layer = initialize_weights(linear(dim_list[i], dim_list[i + 1]))
             layers.append(layer)
             if i < len(dim_list) - 2:
                 if use_norm:
@@ -101,6 +107,7 @@ class DepthwiseSeparableConv(nn.Module):
         super(DepthwiseSeparableConv, self).__init__()
         self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels)
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        self.apply(initialize_weights)
 
     def forward(self, x):
         x = self.depthwise(x)
@@ -141,7 +148,7 @@ class ConvBlock(nn.Module):
             
         self.output_dim = output_dim
         self._initialize_fc(input_shape, channels)
-
+        self.apply(initialize_weights)
 
     def _initialize_fc(self, input_shape, channels):
         with torch.no_grad():
@@ -348,6 +355,7 @@ class ConvMixer(nn.Module):
             nn.Flatten(),
             nn.Linear(dim, output)
         )
+        self.apply(initialize_weights)
 
     def forward(self, x):
         x = self.conv2d1(x)
