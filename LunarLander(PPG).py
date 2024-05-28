@@ -19,7 +19,7 @@ class Config(BasicConfig):
         self.max_steps = 300
         self.algo_name = 'PPG'
         self.train_eps = 2000
-        self.batch_size = 512
+        self.batch_size = 1024
         self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
@@ -67,7 +67,6 @@ class PPG(ModelLoader):
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
-        self.value_loss_fn = nn.MSELoss()
         super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
@@ -127,7 +126,7 @@ class PPG(ModelLoader):
                         torch.max(min_surr, self.cfg.dual_clip * adv[indices]),
                         min_surr
                     ))
-                    value_loss = self.value_loss_fn(v_target[indices], value)
+                    value_loss = F.mse_loss(v_target[indices], value)
                     entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.ent_coef * entropy_loss
 
@@ -163,7 +162,7 @@ class PPG(ModelLoader):
                 with autocast():
                     self.net.reset_hidden()
                     _, v = self.net(states[indices])
-                    value_loss = self.value_loss_fn(v_target[indices], v)
+                    value_loss = F.mse_loss(v_target[indices], v)
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(value_loss).backward()
