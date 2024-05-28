@@ -2,6 +2,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 import random
+import time
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
@@ -87,7 +88,8 @@ def train(env, agent, cfg):
     use_rnn = hasattr(agent.net, 'reset_hidden')
     use_action_fix = hasattr(agent, 'fix_action')
     cfg.show()
-    writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}')
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
