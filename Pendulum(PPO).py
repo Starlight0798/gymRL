@@ -70,7 +70,7 @@ class PPO(ModelLoader):
         alpha, beta, _ = self.net(state)
         dist = Beta(alpha, beta)
         action = dist.sample().squeeze().cpu().numpy()
-        return action
+        return self.fix_action(action)
 
     @torch.no_grad()
     def evaluate(self, state):
@@ -78,7 +78,7 @@ class PPO(ModelLoader):
         alpha, beta, _ = self.net(state)
         dist = Beta(alpha, beta)
         action = dist.mean.squeeze().cpu().numpy()
-        return action
+        return self.fix_action(action)
     
     def fix_action(self, action):
         if action.ndim == 0:
