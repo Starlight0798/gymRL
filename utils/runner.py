@@ -164,8 +164,7 @@ def evaluate(env, agent, cfg, tools):
         ep_reward += reward
         if terminated or truncated:
             break
-    writer.add_scalar('eval/reward', ep_reward, global_step=agent.learn_step)
-    writer.add_scalar('eval/step', ep_step, global_step=agent.learn_step)
+    log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'eval', agent.learn_step)
 
 
 
