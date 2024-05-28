@@ -3,7 +3,7 @@
 
  主要研究了PPO和DQN类算法，根据各个论文复现了如下改进:
 
--  PPO: dual-PPO, clip-PPO, use-RNN, attention etc.
+-  PPO: dual-PPO, clip-PPO, use-RNN, attention, PPG etc.
 -  DQN: rainbow DQN
 
 在离散动作空间和连续动作空间，PPO算法都奏效，因此我对离散和连续动作空间的代码探索主要在LunarLander(PPO), Pendulum(PPO)两份代码进行，读者可以重点关注。
