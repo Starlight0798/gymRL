@@ -4,7 +4,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN, ModelLoader, ConvBlock
+from utils.model import MLP, PSCN, MLPRNN, ModelLoader, ConvBlock, BaseRNNModel
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
@@ -34,10 +34,9 @@ class Config(BasicConfig):
         self.use_atari = True
         self.save_freq = 50
 
-class ActorCritic(nn.Module):
+class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__()
-        self.device = cfg.device
+        super(ActorCritic, self).__init__(cfg.device, hidden_size=64)
         self.conv_layer = ConvBlock(
             channels=[(3, 16), (16, 32), (32, 16)],
             output_dim=256,
@@ -45,7 +44,6 @@ class ActorCritic(nn.Module):
         )
         self.fc_head = PSCN(256, 256)
         self.rnn = MLPRNN(256, 256, batch_first=True)
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
         self.actor_fc = MLP([256, 32, cfg.n_actions])
         self.critic_fc = MLP([256, 32, 1])
 
@@ -57,9 +55,6 @@ class ActorCritic(nn.Module):
         value = self.critic_fc(out)
         return prob, value
 
-    @torch.jit.export
-    def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 64, device=self.device)
 
 class PPO(ModelLoader):
     def __init__(self, cfg):

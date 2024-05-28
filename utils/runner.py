@@ -28,6 +28,8 @@ class BasicConfig:
         self.use_reward_scale = True
         self.load_model = False
         self.save_freq = 100
+        self.state_replay = True
+        self.state_storage_prob = 0.5 
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -100,30 +102,46 @@ def train(env, agent, cfg):
     
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
-        state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
+        
+        if use_rnn:
+            agent.net.reset_hidden()
+            if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.full():
+                state, agent.net.rnn_h = agent.load_state()
+            else:
+                state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
+                
+                
         if cfg.use_reward_scale:
             agent.reward_scale.reset()
         if cfg.use_state_norm:
             state = agent.state_norm(state)
-        if use_rnn:
-            agent.net.reset_hidden()
+            
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
+            
             if cfg.use_state_norm:
                 next_state = agent.state_norm(next_state)
             ep_reward += reward
+            
             if cfg.use_reward_scale:
                 reward = agent.reward_scale(reward)[0]
+                
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
             state = next_state
+            
             if not use_rnn:
                 monitors = agent.update()
                 log_monitors(writer, monitors, agent, 'train', agent.learn_step)
+                
             if done:
                 break
+            
+            if use_rnn and ep_step % 10 == 0:
+                agent.save_state(state, agent.net.rnn_h)
+            
         if use_rnn:
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)

@@ -4,7 +4,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN, ModelLoader
+from utils.model import MLP, PSCN, MLPRNN, ModelLoader, BaseRNNModel
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import train, test, make_env, BasicConfig
 from torch.cuda.amp import GradScaler, autocast
@@ -35,9 +35,9 @@ class Config(BasicConfig):
         self.aux_epochs = 6  
 
 
-class ActorCritic(nn.Module):
+class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__()
+        super(ActorCritic, self).__init__(cfg.device, hidden_size=32)
         self.device = cfg.device
         self.fc_head = PSCN(cfg.n_states, 128)
         self.rnn = MLPRNN(128, 128, batch_first=True)
@@ -51,11 +51,6 @@ class ActorCritic(nn.Module):
         prob = F.softmax(self.actor_fc(out), dim=1)
         value = self.critic_fc(out)
         return prob, value
-
-    @torch.jit.export
-    def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 32, device=self.device)
-
 
 class PPG(ModelLoader):
     def __init__(self, cfg):

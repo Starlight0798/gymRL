@@ -4,6 +4,7 @@ import numpy as np
 import math
 from torch.nn import functional as F
 import os
+from queue import Queue
 
 # 正交初始化
 def orthogonal_init(layer, gain=np.sqrt(2)):
@@ -161,8 +162,6 @@ class ConvBlock(nn.Module):
         return x
 
 
-
-
 # 多头注意力机制
 class MultiHeadAttention(nn.Module):
     def __init__(self, 
@@ -297,7 +296,20 @@ class MLPRNN(nn.Module):
         out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         return out, rnn_state
     
+
+# 循环神经网络基类，覆盖基本方法
+class BaseRNNModel(nn.Module):
+    def __init__(self, device, hidden_size):
+        super(BaseRNNModel, self).__init__()
+        self.device = device
+        self.rnn_h = torch.zeros(1, hidden_size, device=self.device, dtype=torch.float)
+
+    @torch.jit.export
+    def reset_hidden(self):
+        self.rnn_h = torch.zeros_like(self.rnn_h, device=self.device, dtype=torch.float)
     
+
+# convmixer使用的层
 class ConvMixerLayer(nn.Module):
     def __init__(self, dim, kernel_size = 9):
         super().__init__()
@@ -345,16 +357,20 @@ class ConvMixer(nn.Module):
         x = self.head(x)
         return x
             
-            
+
+# 管理模型加载与存储
 class ModelLoader:
-    def __init__(self, save_path='./checkpoints/model.pth'):
+    def __init__(self, save_path='./checkpoints/model.pth', buffer_size=1000):
         self.save_path = save_path
+        self.state_buffer = Queue(maxsize=buffer_size)
         if not os.path.exists(os.path.dirname(save_path)):
             os.makedirs(os.path.dirname(save_path))
 
     def save_model(self):
         state = {}
         for key, value in self.__dict__.items():
+            if key == 'state_buffer':
+                continue
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
             else:
@@ -378,7 +394,16 @@ class ModelLoader:
         except FileNotFoundError as e:
             print(f'模型加载失败：{str(e)}')   
             
+    def save_state(self, state, hidden_state):
+        if self.state_buffer.full():
+            self.state_buffer.get()
+        self.state_buffer.put((state, hidden_state))
 
+    def load_state(self):
+        if not self.state_buffer.empty():
+            return self.state_buffer.get()
+        return None
+            
     def _print_model_summary(self):
         if hasattr(self, 'model'):
             num_params = sum(p.numel() for p in self.model.parameters())
