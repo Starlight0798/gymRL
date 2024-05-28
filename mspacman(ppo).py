@@ -15,10 +15,10 @@ class Config(BasicConfig):
         super(Config, self).__init__()
         self.env_name = 'MsPacmanDeterministic-v4'
         self.render_mode = 'rgb_array'
-        self.max_steps = 500
+        self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 512
+        self.batch_size = 1024
         self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
