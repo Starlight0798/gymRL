@@ -185,7 +185,7 @@ class PPG(ModelLoader):
         self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
                         np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        return {**policy_losses, **aux_losses}
+        return {**policy_losses, **aux_losses}.update({'ent_coef': self.ent_coef})
 
 if __name__ == '__main__':
     cfg = Config()

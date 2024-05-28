@@ -31,7 +31,7 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = True
+        self.load_model = False
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
@@ -152,7 +152,8 @@ class PPO(ModelLoader):
             'value_loss': losses[2] / self.cfg.epochs,
             'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
             'advantage': adv.mean().item(),
-            'lr': self.optimizer.param_groups[0]['lr']
+            'lr': self.optimizer.param_groups[0]['lr'],
+            'ent_coef': self.ent_coef
         }
 
 if __name__ == '__main__':

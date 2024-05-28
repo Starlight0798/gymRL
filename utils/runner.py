@@ -24,12 +24,10 @@ class BasicConfig:
         self.action_bound = None
         self.use_atari = False
         self.unwrapped = False
-        self.use_state_norm = True
-        self.use_reward_scale = True
         self.load_model = False
         self.save_freq = 100
         self.state_replay = True
-        self.state_storage_prob = 0.5 
+        self.state_storage_prob = 0.4 
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -89,9 +87,9 @@ def train(env, agent, cfg):
     print('开始训练!')
     if cfg.load_model:
         agent.load_model()
-    if cfg.use_reward_scale and not hasattr(agent, "reward_scale"):
+    if not hasattr(agent, "reward_scale"):
         agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
-    if cfg.use_state_norm and not hasattr(agent, "state_norm"):
+    if not hasattr(agent, "state_norm"):
         agent.state_norm = Normalization(shape=env.observation_space.shape)
         
     use_rnn = hasattr(agent.net, 'reset_hidden')
@@ -100,33 +98,29 @@ def train(env, agent, cfg):
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
     for i in range(cfg.train_eps):
-        ep_reward, ep_step, state = 0.0, 0, None
+        last_reward, ep_reward, ep_step, state = 0.0, 0.0, 0, None
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.is_full():
+            if cfg.state_replay and agent.state_buffer.is_full() and np.random.rand() < cfg.state_storage_prob:
                 state, agent.net.rnn_h = agent.load_state()
                 
         if state is None:
             state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
                 
-        if cfg.use_reward_scale:
-            agent.reward_scale.reset()
-        if cfg.use_state_norm:
-            state = agent.state_norm(state)
+        agent.reward_scale.reset()
+        state = agent.state_norm(state)
             
         for _ in range(cfg.max_steps):
             ep_step += 1
+            
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
             
-            if cfg.use_state_norm:
-                next_state = agent.state_norm(next_state)
+            next_state = agent.state_norm(next_state)
             ep_reward += reward
+            reward = agent.reward_scale(reward)[0] 
             
-            if cfg.use_reward_scale:
-                reward = agent.reward_scale(reward)[0]
-                
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
             state = next_state
@@ -138,8 +132,9 @@ def train(env, agent, cfg):
             if done:
                 break
             
-            if cfg.state_replay and use_rnn and ep_step % 10 == 0:
+            if cfg.state_replay and use_rnn and abs(reward - last_reward) > 0.15:
                 agent.save_state(state, agent.net.rnn_h)
+            last_reward = reward
             
         if use_rnn:
             monitors = agent.update()
@@ -166,16 +161,14 @@ def evaluate(env, agent, cfg, tools):
     state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
     use_rnn = hasattr(agent.net, 'reset_hidden')
     writer = tools['writer']
-    if cfg.use_state_norm:
-        state = agent.state_norm(state, update=False)
+    state = agent.state_norm(state, update=False)
     if use_rnn:
         agent.net.reset_hidden()
     for _ in range(cfg.max_steps):
         ep_step += 1
         action = agent.evaluate(state)
         next_state, reward, terminated, truncated, _ = env.step(action)
-        if cfg.use_state_norm:
-            next_state = agent.state_norm(next_state, update=False)
+        next_state = agent.state_norm(next_state, update=False)
         state = next_state
         ep_reward += reward
         if terminated or truncated:
@@ -191,16 +184,14 @@ def test(env, agent, cfg):
     for i in range(cfg.test_eps):
         ep_reward, ep_step = 0.0, 0
         state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
-        if cfg.use_state_norm:
-            state = agent.state_norm(state, update=False)
+        state = agent.state_norm(state, update=False)
         if use_rnn:
             agent.net.reset_hidden()
         for _ in range(cfg.max_steps):
             ep_step += 1
             action = agent.evaluate(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
-            if cfg.use_state_norm:
-                next_state = agent.state_norm(next_state, update=False)
+            next_state = agent.state_norm(next_state, update=False)
             state = next_state
             ep_reward += reward
             if terminated or truncated:

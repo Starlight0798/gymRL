@@ -157,7 +157,8 @@ class PPO(ModelLoader):
             'value_loss': losses[2] / self.cfg.epochs,
             'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
             'advantage': adv.mean().item(),
-            'lr': self.optimizer.param_groups[0]['lr']
+            'lr': self.optimizer.param_groups[0]['lr'],
+            'ent_coef': self.ent_coef
         }
 
 if __name__ == '__main__':
