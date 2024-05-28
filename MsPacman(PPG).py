@@ -30,11 +30,11 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = True
         self.use_atari = True
         self.save_freq = 50
+        self.load_model = True
         self.aux_epochs = 6
-        
+        self.reward_diff = 0.08
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):

@@ -4,6 +4,7 @@ import numpy as np
 import math
 from torch.nn import functional as F
 import os
+from utils.buffer import Queue
 
 def initialize_weights(layer, init_type='kaiming', nonlinearity='leaky_relu'):
     if isinstance(layer, (nn.Linear, nn.Conv2d)):
@@ -119,7 +120,7 @@ class DepthwiseSeparableConv(nn.Module):
 class ConvBlock(nn.Module):
     def __init__(self,
                  channels: list[tuple],
-                 output_dim=128,
+                 output_dim,
                  input_shape=(3, 84, 84),
                  kernel_size=3,
                  stride=1,
@@ -148,7 +149,6 @@ class ConvBlock(nn.Module):
             
         self.output_dim = output_dim
         self._initialize_fc(input_shape, channels)
-        self.apply(initialize_weights)
 
     def _initialize_fc(self, input_shape, channels):
         with torch.no_grad():
@@ -162,10 +162,10 @@ class ConvBlock(nn.Module):
 
 
     def forward(self, x):
-        x = self.conv_layers(x)
-        x = torch.flatten(x, 1) 
-        x = self.fc(x)
-        return x
+        features = self.conv_layers(x)
+        flat = torch.flatten(features, 1) 
+        out = self.fc(flat)
+        return out
 
 
 # 多头注意力机制
@@ -365,33 +365,6 @@ class ConvMixer(nn.Module):
         return x
 
 
-# numpy实现环形队列存储
-class Queue:
-    def __init__(self, buffer_size):
-        self.buffer_size = buffer_size
-        self.buffer = np.empty(buffer_size, dtype=object)
-        self.index = 0
-        self.filled = False
-
-    def put(self, item):
-        self.buffer[self.index] = item
-        self.index = (self.index + 1) % self.buffer_size
-        if self.index == 0:
-            self.filled = True
-
-    def sample(self):
-        if not self.filled and self.index == 0:
-            raise ValueError('Queue is empty!')
-        max_index = self.buffer_size if self.filled else self.index
-        idx = np.random.randint(0, max_index)
-        return self.buffer[idx]
-
-    def is_empty(self):
-        return not self.filled and self.index == 0
-
-    def is_full(self):
-        return self.filled
-
 # 管理模型加载与存储
 class ModelLoader:
     def __init__(self, save_path='./checkpoints/model.pth', buffer_size=1000):
@@ -403,6 +376,8 @@ class ModelLoader:
     def save_model(self):
         state = {}
         for key, value in self.__dict__.items():
+            if key == 'state_buffer':
+                continue
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
             else:

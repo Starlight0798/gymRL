@@ -2,7 +2,6 @@ from collections import deque
 import torch
 import numpy as np
 
-
 class ReplayBuffer_on_policy:
     def __init__(self, cfg, capacity=5000):
         self.capacity = capacity
@@ -51,3 +50,34 @@ class ReplayBuffer_off_policy:
         samples = map(lambda x: torch.tensor(np.array(x), dtype=torch.float32,
                                              device=self.device), zip(*self.buffer[indices]))
         return samples
+    
+    
+# numpy实现环形队列存储
+class Queue:
+    def __init__(self, buffer_size):
+        self.buffer_size = buffer_size
+        self.buffer = np.empty(buffer_size, dtype=object)
+        self.index = 0
+        self.filled = False
+
+    def put(self, item):
+        self.buffer[self.index] = item
+        self.index = (self.index + 1) % self.buffer_size
+        if self.index == 0:
+            self.filled = True
+
+    def sample(self):
+        if not self.filled and self.index == 0:
+            raise ValueError('Queue is empty!')
+        max_index = self.buffer_size if self.filled else self.index
+        idx = np.random.randint(0, max_index)
+        return self.buffer[idx]
+
+    def is_empty(self):
+        return not self.filled and self.index == 0
+
+    def is_full(self):
+        return self.filled
+    
+    def size(self):
+        return self.buffer_size if self.filled else self.index

@@ -6,6 +6,7 @@ import time
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
+from utils.env_wrappers import PyTorchFrame
 
 class BasicConfig:
     def __init__(self):
@@ -27,6 +28,7 @@ class BasicConfig:
         self.save_freq = 100
         self.state_replay = True
         self.state_storage_prob = 0.4 
+        self.reward_diff = 0.1
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -36,16 +38,6 @@ class BasicConfig:
             print(k, '=', v)
         print('-' * 60)
 
-
-class PyTorchFrame(gym.ObservationWrapper):
-    def __init__(self, env):
-        super(PyTorchFrame, self).__init__(env)
-        shape = self.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(shape[-1], shape[0], shape[1]),
-                                                dtype=np.uint8)
-
-    def observation(self, observation):
-        return np.rollaxis(observation, 2)
     
     
 def log_monitors(writer, monitors, agent, phase, step):
@@ -86,11 +78,11 @@ def train(env, agent, cfg):
     print('开始训练!')
     if cfg.load_model:
         agent.load_model()
-    if not hasattr(agent, "reward_scale"):
-        agent.reward_scale = RewardScaling(shape=1, gamma=cfg.gamma)
+    
     if not hasattr(agent, "state_norm"):
         agent.state_norm = Normalization(shape=env.observation_space.shape)
         
+    reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
     use_rnn = hasattr(agent.net, 'reset_hidden')
     cfg.show()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -99,27 +91,26 @@ def train(env, agent, cfg):
     for i in range(cfg.train_eps):
         last_reward, ep_reward, ep_step, state = 0.0, 0.0, 0, None
         steps = cfg.max_steps
+        reward_scaler.reset()
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and agent.state_buffer.is_full() and np.random.rand() < cfg.state_storage_prob:
-                state, agent.net.rnn_h, ep_reward, ep_step = agent.load_state()
+            if cfg.state_replay and agent.state_buffer.size() > (cfg.max_steps // 2) and np.random.rand() < cfg.state_storage_prob:
+                state, agent.net.rnn_h, ep_reward, ep_step, env, reward_scaler = agent.load_state()
                 steps -= ep_step
                 
         if state is None:
             state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
-                
-        agent.reward_scale.reset()
-        state = agent.state_norm(state)
+            state = agent.state_norm(state)
             
         for _ in range(steps):
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
+            
             ep_reward += reward
             ep_step += 1
-            
             next_state = agent.state_norm(next_state)
-            reward = agent.reward_scale(reward)[0] 
+            reward = reward_scaler(reward)[0] 
             
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
@@ -132,8 +123,8 @@ def train(env, agent, cfg):
             if done:
                 break
             
-            if cfg.state_replay and use_rnn and abs(reward - last_reward) > 0.15:
-                agent.save_state(state, agent.net.rnn_h, ep_reward, ep_step)
+            if cfg.state_replay and use_rnn and abs(reward - last_reward) > cfg.reward_diff:
+                agent.save_state(state, agent.net.rnn_h, ep_reward, ep_step, env, reward_scaler)
             last_reward = reward
             
         if use_rnn:
