@@ -16,7 +16,6 @@ class BasicConfig:
         self.max_steps = 500
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.param_update_freq = 5
         self.gamma = 0.99
         self.lamda = 0.95
         self.n_states = None
@@ -99,11 +98,13 @@ def train(env, agent, cfg):
     
     for i in range(cfg.train_eps):
         last_reward, ep_reward, ep_step, state = 0.0, 0.0, 0, None
+        steps = cfg.max_steps
         
         if use_rnn:
             agent.net.reset_hidden()
             if cfg.state_replay and agent.state_buffer.is_full() and np.random.rand() < cfg.state_storage_prob:
-                state, agent.net.rnn_h = agent.load_state()
+                state, agent.net.rnn_h, ep_reward, ep_step = agent.load_state()
+                steps -= ep_step
                 
         if state is None:
             state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
@@ -111,14 +112,13 @@ def train(env, agent, cfg):
         agent.reward_scale.reset()
         state = agent.state_norm(state)
             
-        for _ in range(cfg.max_steps):
-            ep_step += 1
-            
+        for _ in range(steps):
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
+            ep_reward += reward
+            ep_step += 1
             
             next_state = agent.state_norm(next_state)
-            ep_reward += reward
             reward = agent.reward_scale(reward)[0] 
             
             done = terminated or truncated
@@ -133,7 +133,7 @@ def train(env, agent, cfg):
                 break
             
             if cfg.state_replay and use_rnn and abs(reward - last_reward) > 0.15:
-                agent.save_state(state, agent.net.rnn_h)
+                agent.save_state(state, agent.net.rnn_h, ep_reward, ep_step)
             last_reward = reward
             
         if use_rnn:

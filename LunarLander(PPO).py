@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 1000
+        self.max_steps = 500
         self.algo_name = 'PPO'
         self.train_eps = 2000
         self.batch_size = 512
@@ -31,7 +31,7 @@ class Config(BasicConfig):
         self.ent_coef_end = 1e-5
         self.ent_decay = int(0.332 * self.train_eps)
         self.grad_clip = 0.5
-        self.load_model = False
+        self.load_model = True
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):

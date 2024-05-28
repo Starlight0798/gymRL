@@ -417,8 +417,8 @@ class ModelLoader:
         except FileNotFoundError as e:
             print(f'模型加载失败：{str(e)}')   
             
-    def save_state(self, state, hidden_state):
-        self.state_buffer.put((state, hidden_state))
+    def save_state(self, *args):
+        self.state_buffer.put(args)
 
     def load_state(self):
         return self.state_buffer.sample()
