@@ -100,14 +100,15 @@ def train(env, agent, cfg):
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
     for i in range(cfg.train_eps):
-        ep_reward, ep_step = 0.0, 0
+        ep_reward, ep_step, state = 0.0, 0, None
         
         if use_rnn:
             agent.net.reset_hidden()
             if cfg.state_replay and np.random.rand() < cfg.state_storage_prob and agent.state_buffer.is_full():
                 state, agent.net.rnn_h = agent.load_state()
-            else:
-                state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
+                
+        if state is None:
+            state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
                 
         if cfg.use_reward_scale:
             agent.reward_scale.reset()

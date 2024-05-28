@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 300
+        self.max_steps = 1000
         self.algo_name = 'PPG'
         self.train_eps = 2000
         self.batch_size = 512
