@@ -102,7 +102,8 @@ def train(env, agent, cfg):
                 
         if state is None:
             state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
-            state = agent.state_norm(state)
+        
+        state = agent.state_norm(state)
             
         for _ in range(steps):
             action = agent.choose_action(state)
@@ -111,7 +112,7 @@ def train(env, agent, cfg):
             ep_reward += reward
             ep_step += 1
             reward = reward_scaler(reward)[0] 
-            next_state = agent.state_norm(next_state)
+            next_state, _save_state = agent.state_norm(next_state), next_state
             
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
@@ -125,7 +126,7 @@ def train(env, agent, cfg):
                 break
             
             if cfg.state_replay and use_rnn and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
-                agent.save_state(state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
+                agent.save_state(_save_state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
             last_reward = reward
             
         if use_rnn:
