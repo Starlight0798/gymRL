@@ -28,7 +28,7 @@ class BasicConfig:
         self.load_model = False
         self.save_freq = 100
         self.state_replay = True
-        self.state_storage_prob = 0.4 
+        self.state_storage_prob = 0.3 
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -89,7 +89,7 @@ def train(env, agent, cfg):
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
     for i in range(cfg.train_eps):
-        last_reward, ep_reward, ep_step, state = 0.0, 0.0, 0, None
+        ep_reward, ep_step, state = 0.0, 0.0, 0, None
         steps = cfg.max_steps
         reward_scaler.reset()
         
@@ -127,7 +127,6 @@ def train(env, agent, cfg):
             
             if cfg.state_replay and use_rnn and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
                 agent.save_state(_save_state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
-            last_reward = reward
             
         if use_rnn:
             monitors = agent.update()
