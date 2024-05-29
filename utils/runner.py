@@ -1,12 +1,13 @@
 import gymnasium as gym
 import numpy as np
 import torch
-import random
 import time
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
 from utils.env_wrappers import PyTorchFrame
+
+np.random.seed(int(time.time()))
 
 class BasicConfig:
     def __init__(self):
@@ -100,7 +101,7 @@ def train(env, agent, cfg):
                 agent.net.set_hidden(rnn_h)
                 
         if state is None:
-            state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
+            state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
             state = agent.state_norm(state)
             
         for _ in range(steps):
@@ -149,7 +150,7 @@ def train(env, agent, cfg):
 
 def evaluate(env, agent, cfg, tools):
     ep_reward, ep_step = 0.0, 0
-    state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
+    state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
     use_rnn = hasattr(agent.net, 'reset_hidden')
     writer = tools['writer']
     state = agent.state_norm(state, update=False)
@@ -174,7 +175,7 @@ def test(env, agent, cfg):
     use_rnn = hasattr(agent.net, 'reset_hidden')
     for i in range(cfg.test_eps):
         ep_reward, ep_step = 0.0, 0
-        state, _ = env.reset(seed=random.randint(1, 2**31 - 1))
+        state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
         state = agent.state_norm(state, update=False)
         if use_rnn:
             agent.net.reset_hidden()
