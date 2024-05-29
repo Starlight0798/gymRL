@@ -313,6 +313,14 @@ class BaseRNNModel(nn.Module):
     @torch.jit.export
     def reset_hidden(self):
         self.rnn_h = torch.zeros_like(self.rnn_h, device=self.device, dtype=torch.float)
+        
+    @torch.jit.export
+    def get_hidden(self):
+        return self.rnn_h
+    
+    @torch.jit.export
+    def set_hidden(self, hidden):
+        self.rnn_h = hidden
     
 
 # convmixer使用的层
