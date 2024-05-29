@@ -59,6 +59,7 @@ class ActorCritic(BaseRNNModel):
 
 class PPG(ModelLoader):
     def __init__(self, cfg):
+        super().__init__(cfg)
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
@@ -67,7 +68,6 @@ class PPG(ModelLoader):
         self.learn_step = 0
         self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
-        super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):

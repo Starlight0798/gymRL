@@ -29,6 +29,8 @@ class BasicConfig:
         self.save_freq = 100
         self.state_replay = True
         self.state_storage_prob = 0.3 
+        self.state_buffer_size = 100
+        self.save_path = './checkpoints/model.pth'
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -76,6 +78,7 @@ def make_env(cfg):
 
 def train(env, agent, cfg):
     print('开始训练!')
+    cfg.show()
     if cfg.load_model:
         agent.load_model()
     
@@ -84,7 +87,6 @@ def train(env, agent, cfg):
         
     reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
     use_rnn = hasattr(agent.net, 'reset_hidden')
-    cfg.show()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     

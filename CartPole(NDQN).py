@@ -36,6 +36,7 @@ class DQNnet(nn.Module):
 
 class DQN(ModelLoader):
     def __init__(self, cfg):
+        super().__init__(cfg)
         self.memory = ReplayBuffer(cfg)
         self.net = DQNnet(cfg).to(cfg.device)
         self.target_net = DQNnet(cfg).to(cfg.device)
@@ -46,7 +47,6 @@ class DQN(ModelLoader):
         self.learn_step = 0
         self.predict_step = 0
         self.lr = cfg.lr_start
-        super().__init__(save_path=f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth')
 
     @torch.no_grad()
     def choose_action(self, state):

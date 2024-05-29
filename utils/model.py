@@ -375,36 +375,39 @@ class ConvMixer(nn.Module):
 
 # 管理模型加载与存储
 class ModelLoader:
-    def __init__(self, save_path='./checkpoints/model.pth', buffer_size=100):
-        self.save_path = save_path
-        self.state_buffer = Queue(buffer_size)
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.makedirs(os.path.dirname(save_path))
+    def __init__(self, cfg):
+        cfg.save_path = f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth'
+        self.cfg = cfg
+        self.state_buffer = Queue(cfg.state_buffer_size)
+        if not os.path.exists(os.path.dirname(cfg.save_path)):
+            os.makedirs(os.path.dirname(cfg.save_path))
 
     def save_model(self):
         state = {}
         for key, value in self.__dict__.items():
-            if key == 'state_buffer':
+            if key in ['state_buffer', 'cfg']:
                 continue
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
             else:
                 state[key] = value
-        torch.save(state, self.save_path)
+        torch.save(state, self.cfg.save_path)
         self._print_model_summary()
-        print(f"模型保存到 {self.save_path}")
+        print(f"模型保存到 {self.cfg.save_path}")
 
     def load_model(self):
         try:
-            checkpoint = torch.load(self.save_path)
+            checkpoint = torch.load(self.cfg.save_path, map_location=self.cfg.device)
             for key, value in checkpoint.items():
+                if key in ['state_buffer', 'cfg']:
+                    continue
                 if key.endswith('_state_dict'):
                     attr_name = key.replace('_state_dict', '')
                     if hasattr(self, attr_name):
                         getattr(self, attr_name).load_state_dict(value)
                 else:
                     setattr(self, key, value)
-            print(f"模型加载： {self.save_path}")
+            print(f"模型加载： {self.cfg.save_path}")
         except FileNotFoundError as e:
             print(f'模型加载失败：{str(e)}')   
             
