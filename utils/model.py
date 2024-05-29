@@ -375,7 +375,7 @@ class ConvMixer(nn.Module):
 
 # 管理模型加载与存储
 class ModelLoader:
-    def __init__(self, save_path='./checkpoints/model.pth', buffer_size=1000):
+    def __init__(self, save_path='./checkpoints/model.pth', buffer_size=100):
         self.save_path = save_path
         self.state_buffer = Queue(buffer_size)
         if not os.path.exists(os.path.dirname(save_path)):

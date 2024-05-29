@@ -81,3 +81,6 @@ class Queue:
     
     def size(self):
         return self.buffer_size if self.filled else self.index
+    
+    def capacity(self):
+        return self.buffer_size

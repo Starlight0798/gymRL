@@ -28,7 +28,6 @@ class BasicConfig:
         self.save_freq = 100
         self.state_replay = True
         self.state_storage_prob = 0.4 
-        self.reward_diff = 0.1
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
 
@@ -91,33 +90,27 @@ def train(env, agent, cfg):
     for i in range(cfg.train_eps):
         last_reward, ep_reward, ep_step, state = 0.0, 0.0, 0, None
         steps = cfg.max_steps
+        reward_scaler.reset()
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and agent.state_buffer.size() > (cfg.max_steps // 2) and np.random.rand() < cfg.state_storage_prob:
+            if cfg.state_replay and not agent.state_buffer.is_empty() and np.random.rand() < cfg.state_storage_prob:
                 state, rnn_h, ep_reward, ep_step, env, reward_scaler = agent.load_state()
                 steps -= ep_step
                 agent.net.set_hidden(rnn_h)
                 
         if state is None:
             state, _ = env.reset(seed=random.randint(1, 2**31 - 1))  
-        
-        reward_scaler.reset()
-        state = agent.state_norm(state)
+            state = agent.state_norm(state)
             
         for _ in range(steps):
-            _save_hidden = agent.net.get_hidden() if use_rnn else None
             action = agent.choose_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
             
             ep_reward += reward
             ep_step += 1
             reward = reward_scaler(reward)[0] 
-            next_state, _save_state = agent.state_norm(next_state), next_state
-            
-            if cfg.state_replay and use_rnn and abs(reward - last_reward) > cfg.reward_diff:
-                agent.save_state(_save_state, _save_hidden, ep_reward, ep_step, env, reward_scaler)
-            last_reward = reward
+            next_state = agent.state_norm(next_state)
             
             done = terminated or truncated
             agent.memory.push((state, action, reward, next_state, done))
@@ -129,6 +122,10 @@ def train(env, agent, cfg):
                 
             if done:
                 break
+            
+            if cfg.state_replay and use_rnn and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
+                agent.save_state(state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
+            last_reward = reward
             
         if use_rnn:
             monitors = agent.update()
