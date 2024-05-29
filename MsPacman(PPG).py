@@ -34,7 +34,6 @@ class Config(BasicConfig):
         self.save_freq = 50
         self.load_model = True
         self.aux_epochs = 6
-        self.reward_diff = 0.08
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
