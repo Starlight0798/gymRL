@@ -89,7 +89,7 @@ def train(env, agent, cfg):
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
     for i in range(cfg.train_eps):
-        ep_reward, ep_step, state = 0.0, 0.0, 0, None
+        ep_reward, ep_step, state = 0.0, 0, None
         steps = cfg.max_steps
         reward_scaler.reset()
         
