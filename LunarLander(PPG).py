@@ -27,9 +27,7 @@ class Config(BasicConfig):
         self.val_coef = 0.5
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.ent_coef_start = 1e-2
-        self.ent_coef_end = 1e-5
-        self.ent_decay = int(0.332 * self.train_eps)
+        self.ent_coef = 1e-2
         self.grad_clip = 0.5
         self.load_model = True
         self.aux_epochs = 6  
@@ -61,16 +59,16 @@ class PPG(ModelLoader):
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
-        self.ent_coef = cfg.ent_coef_start
         self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
         state = torch.tensor(state, device=self.cfg.device, dtype=torch.float).unsqueeze(0)
-        prob, _ = self.net(state)
-        m = Categorical(prob)
-        action = m.sample().item()
-        return action
+        prob, value = self.net(state)
+        dist = Categorical(prob)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+        return action.item(), log_prob.item(), value.item()
 
     @torch.no_grad()
     def evaluate(self, state):
@@ -81,19 +79,11 @@ class PPG(ModelLoader):
         return action
 
     def policy_update(self):
-        states, actions, rewards, next_states, dones = self.memory.sample()
-        actions, rewards, dones = actions.view(-1, 1).type(torch.long), rewards.view(-1, 1), dones.view(-1, 1)
+        states, actions, rewards, next_states, dones, old_probs, values, next_values = self.memory.sample()
 
         with autocast():
-            self.net.reset_hidden()
-            old_probs = torch.log(self.net(states)[0].gather(1, actions)).detach()
-
             with torch.no_grad():
-                self.net.reset_hidden()
-                _, v = self.net(states)
-                self.net.reset_hidden()
-                _, v_ = self.net(next_states)
-                td_error = rewards + self.cfg.gamma * v_ * (1 - dones) - v
+                td_error = rewards + self.cfg.gamma * next_values * (1 - dones) - values
                 td_error = td_error.cpu().detach().numpy()
                 adv, gae = [], 0.0
                 for delta in td_error[::-1]:
@@ -101,7 +91,7 @@ class PPG(ModelLoader):
                     adv.append(gae)
                 adv.reverse()
                 adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
-                v_target = adv + v
+                v_target = adv + values
 
         policy_losses = np.zeros(5)
 
@@ -123,7 +113,7 @@ class PPG(ModelLoader):
                     ))
                     value_loss = F.mse_loss(v_target[indices], value)
                     entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
-                    loss = clip_loss + self.cfg.val_coef * value_loss + self.ent_coef * entropy_loss
+                    loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -146,10 +136,7 @@ class PPG(ModelLoader):
         }
 
     def auxiliary_update(self):
-        states, actions, rewards, next_states, dones = self.memory.sample()
-        with torch.no_grad():
-            self.net.reset_hidden()
-            _, v_target = self.net(states)
+        states, _, _, _, _, _, values, _ = self.memory.sample()
 
         aux_losses = np.zeros(1)
 
@@ -158,7 +145,7 @@ class PPG(ModelLoader):
                 with autocast():
                     self.net.reset_hidden()
                     _, v = self.net(states[indices])
-                    value_loss = F.mse_loss(v_target[indices], v)
+                    value_loss = F.mse_loss(values[indices], v)
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(value_loss).backward()
@@ -182,10 +169,8 @@ class PPG(ModelLoader):
         self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
-        self.ent_coef = self.cfg.ent_coef_end + (self.cfg.ent_coef_start - self.cfg.ent_coef_end) * \
-                        np.exp(-1.0 * self.learn_step / self.cfg.ent_decay)
 
-        return {**policy_losses, **aux_losses, 'ent_coef': self.ent_coef}
+        return {**policy_losses, **aux_losses}
 
 if __name__ == '__main__':
     cfg = Config()

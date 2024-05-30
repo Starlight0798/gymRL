@@ -385,7 +385,8 @@ class ModelLoader:
     def save_model(self):
         state = {}
         for key, value in self.__dict__.items():
-            if key in ['state_buffer', 'cfg']:
+            exclude_keys = ['state_buffer', 'cfg', 'memory']
+            if key in exclude_keys:
                 continue
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
@@ -399,7 +400,8 @@ class ModelLoader:
         try:
             checkpoint = torch.load(self.cfg.save_path, map_location=self.cfg.device)
             for key, value in checkpoint.items():
-                if key in ['state_buffer', 'cfg']:
+                exclude_keys = ['state_buffer', 'cfg', 'memory']
+                if key in exclude_keys:
                     continue
                 if key.endswith('_state_dict'):
                     attr_name = key.replace('_state_dict', '')

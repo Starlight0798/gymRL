@@ -2,6 +2,7 @@ gym
 gymnasium
 gymnasium[atari]
 gymnasium[accept-rom-license]
+gymnasium[box2d]
 torch
 numpy
 tensorboard

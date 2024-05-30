@@ -6,6 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
 from utils.env_wrappers import PyTorchFrame
+from utils.buffer import ReplayBuffer_on_policy
 
 np.random.seed(int(time.time()))
 
@@ -87,6 +88,7 @@ def train(env, agent, cfg):
         
     reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
     use_rnn = hasattr(agent.net, 'reset_hidden')
+    on_policy = isinstance(agent.memory, ReplayBuffer_on_policy)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
@@ -97,7 +99,7 @@ def train(env, agent, cfg):
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and not agent.state_buffer.is_empty() and np.random.rand() < cfg.state_storage_prob:
+            if cfg.state_replay and agent.state_buffer.is_full() and np.random.rand() < cfg.state_storage_prob:
                 state, rnn_h, ep_reward, ep_step, env, reward_scaler = agent.load_state()
                 steps -= ep_step
                 agent.net.set_hidden(rnn_h)
@@ -106,18 +108,32 @@ def train(env, agent, cfg):
             state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
         
         state = agent.state_norm(state)
-            
-        for _ in range(steps):
+        
+        if on_policy:
+            action, log_prob, value = agent.choose_action(state)
+        else:
             action = agent.choose_action(state)
+
+        for _ in range(steps):
             next_state, reward, terminated, truncated, info = env.step(action)
-            
+            done = terminated or truncated
             ep_reward += reward
             ep_step += 1
-            reward = reward_scaler(reward)[0] 
-            next_state, _save_state = agent.state_norm(next_state), next_state
             
-            done = terminated or truncated
-            agent.memory.push((state, action, reward, next_state, done))
+            if cfg.state_replay and use_rnn and not done and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
+                agent.save_state(next_state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
+
+            reward = reward_scaler(reward)[0] 
+            next_state = agent.state_norm(next_state)
+            
+            if on_policy:
+                _action, _log_prob, _value = agent.choose_action(next_state)
+                agent.memory.push((state, action, reward, next_state, done, log_prob, value, _value))
+                action, log_prob, value = _action, _log_prob, _value
+            else:
+                agent.memory.push((state, action, reward, next_state, done))
+                action = agent.choose_action(next_state)
+                
             state = next_state
             
             if not use_rnn:
@@ -126,10 +142,7 @@ def train(env, agent, cfg):
                 
             if done:
                 break
-            
-            if cfg.state_replay and use_rnn and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
-                agent.save_state(_save_state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
-            
+        
         if use_rnn:
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)
