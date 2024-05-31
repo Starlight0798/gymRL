@@ -92,7 +92,7 @@ class Config(BasicConfig):
 
 ## 更新
 
-- 加入torch.jit.script使用，jit优化能显著提升推理速度，我推荐任何人使用它
+- 加入torch.jit.script使用，jit优化能显著提升推理速度
 - 使用混合精度，显著优化降低显存使用
-- 使用CosineAnnealingLR调整学习率，效果显著
-- 添加了“状态回放”机制，在每局开始时，有一定概率“回放“历史对局，直接学习中局和残局
+- 使用CosineAnnealingLR调整学习率
+- 网络可使用RNN(LSTM or GRU)，需继承*BaseRNNModel*

@@ -16,7 +16,7 @@ class BasicConfig:
         self.train_eps = 500
         self.test_eps = 3
         self.eval_freq = 10
-        self.max_steps = 500
+        self.max_steps = np.iinfo(np.int32).max
         self.lr_start = 1e-3
         self.lr_end = 1e-5
         self.gamma = 0.99
@@ -28,9 +28,6 @@ class BasicConfig:
         self.unwrapped = False
         self.load_model = False
         self.save_freq = 100
-        self.state_replay = True
-        self.state_storage_prob = 0.3 
-        self.state_buffer_size = 100
         self.save_path = './checkpoints/model.pth'
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
@@ -93,20 +90,14 @@ def train(env, agent, cfg):
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     
     for i in range(cfg.train_eps):
-        ep_reward, ep_step, state = 0.0, 0, None
+        ep_reward, ep_step = 0.0, 0
         steps = cfg.max_steps
         reward_scaler.reset()
         
         if use_rnn:
             agent.net.reset_hidden()
-            if cfg.state_replay and agent.state_buffer.is_full() and np.random.rand() < cfg.state_storage_prob:
-                state, rnn_h, ep_reward, ep_step, env, reward_scaler = agent.load_state()
-                steps -= ep_step
-                agent.net.set_hidden(rnn_h)
-                
-        if state is None:
-            state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
-        
+
+        state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
         state = agent.state_norm(state)
         
         if on_policy:
@@ -119,9 +110,6 @@ def train(env, agent, cfg):
             done = terminated or truncated
             ep_reward += reward
             ep_step += 1
-            
-            if cfg.state_replay and use_rnn and not done and ep_step % (cfg.max_steps // agent.state_buffer.capacity()) == 0:
-                agent.save_state(next_state, agent.net.get_hidden(), ep_reward, ep_step, env, reward_scaler)
 
             reward = reward_scaler(reward)[0] 
             next_state = agent.state_norm(next_state)
@@ -164,22 +152,21 @@ def train(env, agent, cfg):
 
 
 def evaluate(env, agent, cfg, tools):
-    ep_reward, ep_step = 0.0, 0
+    ep_reward, ep_step, done = 0.0, 0, False
     state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
     use_rnn = hasattr(agent.net, 'reset_hidden')
     writer = tools['writer']
     state = agent.state_norm(state, update=False)
     if use_rnn:
         agent.net.reset_hidden()
-    for _ in range(cfg.max_steps):
+    while not done:
         ep_step += 1
         action = agent.evaluate(state)
         next_state, reward, terminated, truncated, _ = env.step(action)
         next_state = agent.state_norm(next_state, update=False)
         state = next_state
         ep_reward += reward
-        if terminated or truncated:
-            break
+        done = terminated or truncated
     log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'eval', agent.learn_step)
 
 
@@ -189,20 +176,19 @@ def test(env, agent, cfg):
     agent.load_model()
     use_rnn = hasattr(agent.net, 'reset_hidden')
     for i in range(cfg.test_eps):
-        ep_reward, ep_step = 0.0, 0
+        ep_reward, ep_step, done = 0.0, 0, False
         state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
         state = agent.state_norm(state, update=False)
         if use_rnn:
             agent.net.reset_hidden()
-        for _ in range(cfg.max_steps):
+        while not done:
             ep_step += 1
             action = agent.evaluate(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
             next_state = agent.state_norm(next_state, update=False)
             state = next_state
             ep_reward += reward
-            if terminated or truncated:
-                break
+            done = terminated or truncated
         print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}, 步数:{ep_step:.0f}')
     print('结束测试!')
     env.close()

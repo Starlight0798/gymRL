@@ -16,11 +16,11 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 1000
+        self.max_steps = 500
         self.algo_name = 'PPO'
         self.train_eps = 2000
-        self.batch_size = 512
-        self.mini_batch = 16
+        self.batch_size = 2048
+        self.mini_batch = 64
         self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99

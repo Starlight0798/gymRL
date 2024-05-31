@@ -378,7 +378,6 @@ class ModelLoader:
     def __init__(self, cfg):
         cfg.save_path = f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth'
         self.cfg = cfg
-        self.state_buffer = Queue(cfg.state_buffer_size)
         if not os.path.exists(os.path.dirname(cfg.save_path)):
             os.makedirs(os.path.dirname(cfg.save_path))
 
@@ -413,15 +412,21 @@ class ModelLoader:
         except FileNotFoundError as e:
             print(f'模型加载失败：{str(e)}')   
             
-    def save_state(self, *args):
-        self.state_buffer.put(args)
-
-    def load_state(self):
-        return self.state_buffer.sample()
-            
     def _print_model_summary(self):
         if hasattr(self, 'model'):
             num_params = sum(p.numel() for p in self.model.parameters())
             print(f"Model Summary: Number of parameters: {num_params}")
             for name, param in self.model.named_parameters():
                 print(f"{name}: {param.numel()} parameters")
+                
+
+class StateManager:
+    def __init__(self, buffer_size=100):
+        self.state_buffer = Queue(buffer_size)
+
+    def save_state(self, *args):
+        self.state_buffer.put(args)
+
+    def load_state(self):
+        return self.state_buffer.sample()
+    
