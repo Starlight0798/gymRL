@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 2048
+        self.batch_size = 4096
         self.mini_batch = 64
         self.epochs = 3
         self.clip = 0.2
@@ -27,30 +27,33 @@ class Config(BasicConfig):
         self.val_coef = 0.5
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.ent_coef = 1e-2
+        self.ent_coef = 2e-2
         self.grad_clip = 0.5
         self.use_atari = True
         self.save_freq = 50
         self.load_model = True
 
 
-class ActorCritic(nn.Module):
+class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__()
+        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=128)
         self.conv_layer = ConvBlock(
-            channels=[(3, 16), (16, 32), (32, 16)],
+            channels=[(3, 16), (16, 32), (32, 64), (64, 128), (128, 256), (256, 512)],
             output_dim=512,
             input_shape=(3, 84, 84),
+            use_depthwise=False
         )
         self.fc_head = PSCN(512, 512)
+        self.rnn = MLPRNN(512, 512, batch_first=True)
         self.actor_fc = MLP([512, 128, cfg.n_actions])
         self.critic_fc = MLP([512, 64, 1])
 
     def forward(self, s):
         feature = self.conv_layer(s)
         x = self.fc_head(feature)
-        prob = F.softmax(self.actor_fc(x), dim=1)
-        value = self.critic_fc(x)
+        out, self.rnn_h = self.rnn(x, self.rnn_h)
+        prob = F.softmax(self.actor_fc(out), dim=1)
+        value = self.critic_fc(out)
         return prob, value
 
 
@@ -105,6 +108,7 @@ class PPO(ModelLoader):
             for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch,
                                         drop_last=False):
                 with autocast():
+                    self.net.reset_hidden()
                     actor_prob, value = self.net(states[indices])
                     log_probs = torch.log(actor_prob.gather(1, actions[indices]))
                     ratio = torch.exp(log_probs - old_probs[indices])
