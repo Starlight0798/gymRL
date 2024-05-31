@@ -23,6 +23,7 @@ class Config(BasicConfig):
         self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
+        self.gamma = 0.99
         self.dual_clip = 3.0
         self.val_coef = 0.5
         self.lr_start = 1e-3
@@ -34,13 +35,13 @@ class Config(BasicConfig):
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__(cfg.device, hidden_size=32)
+        super(ActorCritic, self).__init__(cfg.device, hidden_size=16)
         self.device = cfg.device
-        self.fc_head = PSCN(cfg.n_states, 128)
-        self.rnn = MLPRNN(128, 128, batch_first=True)
-        self.rnn_h = torch.zeros(1, 32, device=self.device)
-        self.actor_fc = MLP([128, cfg.n_actions])
-        self.critic_fc = MLP([128, 16, 1])
+        self.fc_head = PSCN(cfg.n_states, 64)
+        self.rnn = MLPRNN(64, 64, batch_first=True)
+        self.rnn_h = torch.zeros(1, 16, device=self.device)
+        self.actor_fc = MLP([64, cfg.n_actions])
+        self.critic_fc = MLP([64, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
