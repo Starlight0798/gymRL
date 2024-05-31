@@ -18,8 +18,8 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 1024
-        self.mini_batch = 16
+        self.batch_size = 2048
+        self.mini_batch = 64
         self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99
@@ -41,7 +41,6 @@ class ActorCritic(BaseRNNModel):
             channels=[(3, 16), (16, 32), (32, 64), (64, 128), (128, 256), (256, 512)],
             output_dim=512,
             input_shape=(3, 84, 84),
-            use_depthwise=False
         )
         self.fc_head = PSCN(512, 512)
         self.rnn = MLPRNN(512, 512, batch_first=True)
