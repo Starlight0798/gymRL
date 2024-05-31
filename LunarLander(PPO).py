@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.unwrapped = True
         self.max_steps = 500
         self.algo_name = 'PPO'
-        self.train_eps = 2000
+        self.train_eps = 3000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
