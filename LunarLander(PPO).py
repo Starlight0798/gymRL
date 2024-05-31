@@ -104,6 +104,8 @@ class PPO(ModelLoader):
             
             for indices in sampler:
                 with autocast():
+                    if self.cfg.use_rnn:
+                        self.net.reset_hidden()
                     actor_prob, value = self.net(states[indices])
                     log_probs = torch.log(actor_prob.gather(1, actions[indices]))
                     ratio = torch.exp(log_probs - old_probs[indices])
