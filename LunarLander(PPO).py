@@ -4,9 +4,9 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
 from torch.utils.data import BatchSampler, SubsetRandomSampler
-from utils.model import MLP, PSCN, MLPRNN, ModelLoader, BaseRNNModel
+from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
-from utils.runner import train, test, make_env, BasicConfig
+from utils.runner import *
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.unwrapped = True
         self.max_steps = 500
         self.algo_name = 'PPO'
-        self.train_eps = 3000
+        self.train_eps = 2000
         self.batch_size = 512
         self.mini_batch = 16
         self.epochs = 3
@@ -33,21 +33,17 @@ class Config(BasicConfig):
         self.load_model = True
 
 
-class ActorCritic(BaseRNNModel):
+class ActorCritic(nn.Module):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__(cfg.device, hidden_size=16)
-        self.device = cfg.device
-        self.fc_head = PSCN(cfg.n_states, 64)
-        self.rnn = MLPRNN(64, 64, batch_first=True)
-        self.rnn_h = torch.zeros(1, 16, device=self.device)
-        self.actor_fc = MLP([64, cfg.n_actions])
-        self.critic_fc = MLP([64, 1])
+        super(ActorCritic, self).__init__()
+        self.fc_head = PSCN(cfg.n_states, 256)
+        self.actor_fc = MLP([256, 64, cfg.n_actions])
+        self.critic_fc = MLP([256, 32, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
-        out, self.rnn_h = self.rnn(x, self.rnn_h)
-        prob = F.softmax(self.actor_fc(out), dim=1)
-        value = self.critic_fc(out)
+        prob = F.softmax(self.actor_fc(x), dim=1)
+        value = self.critic_fc(x)
         return prob, value
 
 
@@ -102,7 +98,6 @@ class PPO(ModelLoader):
             for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch,
                                         drop_last=False):
                 with autocast():
-                    self.net.reset_hidden()
                     actor_prob, value = self.net(states[indices])
                     log_probs = torch.log(actor_prob.gather(1, actions[indices]))
                     ratio = torch.exp(log_probs - old_probs[indices])

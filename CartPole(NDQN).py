@@ -2,9 +2,9 @@ import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
-from utils.model import MLP, NoisyLinear, ModelLoader
+from utils.model import *
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
-from utils.runner import train, test, make_env, BasicConfig
+from utils.runner import *
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
