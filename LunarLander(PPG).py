@@ -19,8 +19,8 @@ class Config(BasicConfig):
         self.max_steps = 500
         self.algo_name = 'PPG'
         self.train_eps = 2000
-        self.batch_size = 512
-        self.mini_batch = 16
+        self.batch_size = 2048
+        self.mini_batch = 64
         self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99
