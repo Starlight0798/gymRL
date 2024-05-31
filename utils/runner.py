@@ -92,7 +92,6 @@ def train(env, agent, cfg):
     
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
-        steps = cfg.max_steps
         agent.reward_scaler.reset()
         
         if use_rnn:
@@ -106,7 +105,7 @@ def train(env, agent, cfg):
         else:
             action = agent.choose_action(state)
 
-        for _ in range(steps):
+        for _ in range(cfg.max_steps):
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             ep_reward += reward

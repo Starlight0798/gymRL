@@ -6,7 +6,7 @@
 -  PPO: dual-PPO, clip-PPO, use-RNN, attention, PPG etc.
 -  DQN: rainbow DQN
 
-在离散动作空间的代码探索主要在LunarLander(PPO)和LunarLander(PPG)代码进行，读者可以重点关注。
+在离散动作空间的代码探索主要在LunarLander(PPO)和MsPacman(PPO)代码进行，读者可以重点关注。
 
 ```python
 class PSCN(nn.Module):
