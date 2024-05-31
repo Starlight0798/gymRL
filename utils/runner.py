@@ -82,8 +82,9 @@ def train(env, agent, cfg):
     
     if not hasattr(agent, "state_norm"):
         agent.state_norm = Normalization(shape=env.observation_space.shape)
-        
-    reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
+    if not hasattr(agent, "reward_scaler"):
+        agent.reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
+
     use_rnn = hasattr(agent.net, 'reset_hidden')
     on_policy = isinstance(agent.memory, ReplayBuffer_on_policy)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -92,7 +93,7 @@ def train(env, agent, cfg):
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         steps = cfg.max_steps
-        reward_scaler.reset()
+        agent.reward_scaler.reset()
         
         if use_rnn:
             agent.net.reset_hidden()
@@ -111,7 +112,7 @@ def train(env, agent, cfg):
             ep_reward += reward
             ep_step += 1
 
-            reward = reward_scaler(reward)[0] 
+            reward = agent.reward_scaler(reward)[0] 
             next_state = agent.state_norm(next_state)
             
             if on_policy:
@@ -135,7 +136,6 @@ def train(env, agent, cfg):
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)
 
-        agent.scheduler.step()
         log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'train', i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
         

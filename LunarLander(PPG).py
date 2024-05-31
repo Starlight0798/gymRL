@@ -161,6 +161,7 @@ class PPG(ModelLoader):
         policy_losses = self.policy_update()
         aux_losses = self.auxiliary_update()
         
+        self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
 

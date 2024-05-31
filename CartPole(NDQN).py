@@ -78,6 +78,7 @@ class DQN(ModelLoader):
         loss.backward()
         self.optimizer.step()
 
+        self.scheduler.step()
         self.learn_step += 1
         if self.learn_step % self.cfg.target_update == 0:
             self.target_net.load_state_dict(self.net.state_dict())

@@ -18,8 +18,8 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 4096
-        self.mini_batch = 64
+        self.batch_size = 1024
+        self.mini_batch = 16
         self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99
@@ -27,7 +27,7 @@ class Config(BasicConfig):
         self.val_coef = 0.5
         self.lr_start = 1e-3
         self.lr_end = 1e-5
-        self.ent_coef = 2e-2
+        self.ent_coef = 1e-2
         self.grad_clip = 0.5
         self.use_atari = True
         self.save_freq = 50
@@ -135,7 +135,8 @@ class PPO(ModelLoader):
                 losses[1] += clip_loss.item()
                 losses[2] += value_loss.item()
                 losses[3] += entropy_loss.item()
-                
+        
+        self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
 
