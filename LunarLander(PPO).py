@@ -125,8 +125,6 @@ class PPO(ModelLoader):
                 losses[2] += value_loss.item()
                 losses[3] += entropy_loss.item()
                 
-            
-        self.scheduler.step()
         self.memory.clear()
         self.learn_step += 1
 

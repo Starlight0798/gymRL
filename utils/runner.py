@@ -134,7 +134,8 @@ def train(env, agent, cfg):
         if use_rnn:
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)
-            
+
+        agent.scheduler.step()
         log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'train', i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
         
