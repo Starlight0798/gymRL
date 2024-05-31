@@ -203,7 +203,7 @@ def test(env, agent, cfg):
             ep_reward += reward
             if terminated or truncated:
                 break
-        print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}')
+        print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}, 步数:{ep_step:.0f}')
     print('结束测试!')
     env.close()
     
