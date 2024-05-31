@@ -3,7 +3,7 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
-from torch.utils.data import BatchSampler, SubsetRandomSampler
+from torch.utils.data import BatchSampler, SubsetRandomSampler, SequentialSampler
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
@@ -21,7 +21,7 @@ class Config(BasicConfig):
         self.train_eps = 2000
         self.batch_size = 2048
         self.mini_batch = 64
-        self.epochs = 3
+        self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.99
         self.dual_clip = 3.0
@@ -57,6 +57,7 @@ class PPG(ModelLoader):
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
         self.scaler = GradScaler()
+        cfg.use_rnn = hasattr(self.net, 'reset_hidden')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -89,11 +90,17 @@ class PPG(ModelLoader):
                 adv.reverse()
                 adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
                 v_target = adv + values
+                adv = (adv - adv.mean()) / (adv.std() + 1e-5)
 
         policy_losses = np.zeros(5)
 
         for _ in range(self.cfg.epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
+            if self.cfg.use_rnn:
+                sampler = BatchSampler(SequentialSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
+            else:
+                sampler = BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
+            
+            for indices in sampler:
                 with autocast():
                     actor_prob, value = self.net(states[indices])
                     log_probs = torch.log(actor_prob.gather(1, actions[indices]))

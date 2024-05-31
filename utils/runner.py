@@ -28,6 +28,8 @@ class BasicConfig:
         self.unwrapped = False
         self.load_model = False
         self.save_freq = 100
+        self.use_rnn = None
+        self.on_policy = None
         self.save_path = './checkpoints/model.pth'
         self.device = torch.device('cuda') \
             if torch.cuda.is_available() else torch.device('cpu')
@@ -76,7 +78,7 @@ def make_env(cfg):
 
 def train(env, agent, cfg):
     print('开始训练!')
-    cfg.show()
+    
     if cfg.load_model:
         agent.load_model()
     
@@ -85,22 +87,22 @@ def train(env, agent, cfg):
     if not hasattr(agent, "reward_scaler"):
         agent.reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
 
-    use_rnn = hasattr(agent.net, 'reset_hidden')
-    on_policy = isinstance(agent.memory, ReplayBuffer_on_policy)
+    cfg.on_policy = isinstance(agent.memory, ReplayBuffer_on_policy)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
+    cfg.show()
     
     for i in range(cfg.train_eps):
         ep_reward, ep_step = 0.0, 0
         agent.reward_scaler.reset()
         
-        if use_rnn:
+        if cfg.use_rnn:
             agent.net.reset_hidden()
 
         state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))  
         state = agent.state_norm(state)
         
-        if on_policy:
+        if cfg.on_policy:
             action, log_prob, value = agent.choose_action(state)
         else:
             action = agent.choose_action(state)
@@ -114,7 +116,7 @@ def train(env, agent, cfg):
             reward = agent.reward_scaler(reward)[0] 
             next_state = agent.state_norm(next_state)
             
-            if on_policy:
+            if cfg.on_policy:
                 _action, _log_prob, _value = agent.choose_action(next_state)
                 agent.memory.push((state, action, reward, next_state, done, log_prob, value, _value))
                 action, log_prob, value = _action, _log_prob, _value
@@ -124,14 +126,14 @@ def train(env, agent, cfg):
                 
             state = next_state
             
-            if not use_rnn:
+            if not cfg.use_rnn:
                 monitors = agent.update()
                 log_monitors(writer, monitors, agent, 'train', agent.learn_step)
                 
             if done:
                 break
         
-        if use_rnn:
+        if cfg.use_rnn:
             monitors = agent.update()
             log_monitors(writer, monitors, agent, 'train', agent.learn_step)
 
@@ -154,10 +156,9 @@ def train(env, agent, cfg):
 def evaluate(env, agent, cfg, tools):
     ep_reward, ep_step, done = 0.0, 0, False
     state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
-    use_rnn = hasattr(agent.net, 'reset_hidden')
     writer = tools['writer']
     state = agent.state_norm(state, update=False)
-    if use_rnn:
+    if cfg.use_rnn:
         agent.net.reset_hidden()
     while not done:
         ep_step += 1
@@ -174,12 +175,11 @@ def evaluate(env, agent, cfg, tools):
 def test(env, agent, cfg):
     print('开始测试!')
     agent.load_model()
-    use_rnn = hasattr(agent.net, 'reset_hidden')
     for i in range(cfg.test_eps):
         ep_reward, ep_step, done = 0.0, 0, False
         state, _ = env.reset(seed=np.random.randint(1, 2**31 - 1))
         state = agent.state_norm(state, update=False)
-        if use_rnn:
+        if cfg.use_rnn:
             agent.net.reset_hidden()
         while not done:
             ep_step += 1
