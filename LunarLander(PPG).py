@@ -19,9 +19,9 @@ class Config(BasicConfig):
         self.max_steps = 500
         self.algo_name = 'PPG'
         self.train_eps = 2000
-        self.batch_size = 2048
-        self.mini_batch = 64
-        self.epochs = 10
+        self.batch_size = 1024
+        self.mini_batch = 16
+        self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99
         self.dual_clip = 3.0
@@ -34,17 +34,19 @@ class Config(BasicConfig):
         self.aux_epochs = 6  
 
 
-class ActorCritic(nn.Module):
+class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__()
-        self.fc_head = PSCN(cfg.n_states, 256)
-        self.actor_fc = MLP([256, 64, cfg.n_actions])
-        self.critic_fc = MLP([256, 32, 1])
+        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=32)
+        self.fc_head = PSCN(cfg.n_states, 128)
+        self.rnn = MLPRNN(128, 128, batch_first=True)
+        self.actor_fc = MLP([128, cfg.n_actions])
+        self.critic_fc = MLP([128, 16, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
-        prob = F.softmax(self.actor_fc(x), dim=1)
-        value = self.critic_fc(x)
+        out, self.rnn_h = self.rnn(x, self.rnn_h)
+        prob = F.softmax(self.actor_fc(out), dim=1)
+        value = self.critic_fc(out)
         return prob, value
 
 class PPG(ModelLoader):
@@ -146,8 +148,15 @@ class PPG(ModelLoader):
         aux_losses = np.zeros(1)
 
         for _ in range(self.cfg.aux_epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
+            if self.cfg.use_rnn:
+                sampler = BatchSampler(SequentialSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
+            else:
+                sampler = BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
+            
+            for indices in sampler:
                 with autocast():
+                    if self.cfg.use_rnn:
+                        self.net.reset_hidden()
                     _, aux_value = self.net(states[indices])
                     value_loss = F.mse_loss(values[indices], aux_value)
 

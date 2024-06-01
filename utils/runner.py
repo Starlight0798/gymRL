@@ -48,8 +48,8 @@ def log_monitors(writer, monitors, agent, phase, step):
             writer.add_scalar(f'{phase}/{key}', value, global_step=step)
 
 
-def make_env(cfg):
-    env = gym.make(cfg.env_name, render_mode=cfg.render_mode)
+def make_env(cfg, **kwargs):
+    env = gym.make(cfg.env_name, render_mode=cfg.render_mode, **kwargs)
     s = env.observation_space.shape
     use_rgb = len(s) == 3 and s[2] in [1, 3]
     if cfg.use_atari:
@@ -143,7 +143,7 @@ def train(env, agent, cfg):
         if (i + 1) % cfg.eval_freq == 0:
             tools = {'writer': writer}
             evaluate(env, agent, cfg, tools)
-            
+        
         if (i + 1) % cfg.save_freq == 0:
             agent.save_model()    
             

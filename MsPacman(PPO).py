@@ -18,9 +18,9 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 2048
-        self.mini_batch = 64
-        self.epochs = 10
+        self.batch_size = 1024
+        self.mini_batch = 16
+        self.epochs = 3
         self.clip = 0.2
         self.gamma = 0.99
         self.dual_clip = 3.0
@@ -44,7 +44,7 @@ class ActorCritic(BaseRNNModel):
         )
         self.fc_head = PSCN(512, 512)
         self.rnn = MLPRNN(512, 512, batch_first=True)
-        self.actor_fc = MLP([512, 128, cfg.n_actions])
+        self.actor_fc = MLP([512, 128, 5])
         self.critic_fc = MLP([512, 64, 1])
 
     def forward(self, s):
@@ -157,12 +157,12 @@ class PPO(ModelLoader):
 
 if __name__ == '__main__':
     cfg = Config()
-    env = make_env(cfg)
+    env = make_env(cfg, mode=0)
     agent = PPO(cfg)
     train(env, agent, cfg)
     
     cfg = Config()
     cfg.render_mode = 'human'
-    env = make_env(cfg)
+    env = make_env(cfg, mode=0)
     agent = PPO(cfg)
     test(env, agent, cfg)
