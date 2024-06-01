@@ -21,15 +21,15 @@ class ReplayBuffer_on_policy:
         self.pointer = 0
         
     def sample(self):
-        states, actions, rewards, next_states, dones, log_probs, values, next_values = map(
+        states, actions, rewards, next_states, dones, dw, log_probs, values, next_values = map(
             lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.device), 
             zip(*self.buffer[:self.size])
         )
         
-        actions, rewards, dones, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
-            rewards.view(-1, 1), dones.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
+        actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
+            rewards.view(-1, 1), dones.view(-1, 1), dw.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
         
-        return states, actions, rewards, next_states, dones, log_probs, values, next_values
+        return states, actions, rewards, next_states, dones, dw, log_probs, values, next_values
 
 
 class ReplayBuffer_off_policy:

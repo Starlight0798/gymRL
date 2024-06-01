@@ -19,9 +19,9 @@ class Config(BasicConfig):
         self.max_steps = 500
         self.algo_name = 'PPO'
         self.train_eps = 2000
-        self.batch_size = 1024
-        self.mini_batch = 16
-        self.epochs = 3
+        self.batch_size = 2048
+        self.mini_batch = 64
+        self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.99
         self.dual_clip = 3.0
@@ -82,14 +82,15 @@ class PPO(ModelLoader):
         if self.memory.size < self.cfg.batch_size:
             return {}
         
-        states, actions, rewards, next_states, dones, old_probs, values, next_values = self.memory.sample()
+        states, actions, rewards, next_states, dones, dw, old_probs, values, next_values = self.memory.sample()
         with autocast():
             with torch.no_grad():
-                td_error = rewards + self.cfg.gamma * next_values * (1 - dones) - values
+                td_error = rewards + self.cfg.gamma * next_values * (1 - dw) - values
                 td_error = td_error.cpu().detach().numpy()
+                dones = dones.cpu().detach().numpy()
                 adv, gae = [], 0.0
-                for delta in td_error[::-1]:
-                    gae = self.cfg.gamma * self.cfg.lamda * gae + delta
+                for delta, d in zip(td_error[::-1], dones[::-1]):
+                    gae = self.cfg.gamma * self.cfg.lamda * gae * (1 - d) + delta
                     adv.append(gae)
                 adv.reverse()
                 adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)

@@ -118,7 +118,7 @@ def train(env, agent, cfg):
             
             if cfg.on_policy:
                 _action, _log_prob, _value = agent.choose_action(next_state)
-                agent.memory.push((state, action, reward, next_state, done, log_prob, value, _value))
+                agent.memory.push((state, action, reward, next_state, done, terminated, log_prob, value, _value))
                 action, log_prob, value = _action, _log_prob, _value
             else:
                 agent.memory.push((state, action, reward, next_state, done))
