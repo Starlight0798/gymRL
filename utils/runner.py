@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
 from utils.env_wrappers import PyTorchFrame
-from utils.buffer import ReplayBuffer_on_policy
+from utils.buffer import *
 
 np.random.seed(int(time.time()))
 
@@ -16,7 +16,7 @@ class BasicConfig:
         self.train_eps = 500
         self.test_eps = 3
         self.eval_freq = 10
-        self.max_steps = np.iinfo(np.int32).max
+        self.max_steps = 3000
         self.lr_start = 1e-3
         self.lr_end = 1e-5
         self.gamma = 0.99
@@ -27,7 +27,7 @@ class BasicConfig:
         self.use_atari = False
         self.unwrapped = False
         self.load_model = False
-        self.save_freq = 100
+        self.save_freq = 50
         self.use_rnn = None
         self.on_policy = None
         self.save_path = './checkpoints/model.pth'
@@ -65,6 +65,7 @@ def make_env(cfg, **kwargs):
     print(f'观测空间 = {env.observation_space}')
     print(f'动作空间 = {env.action_space}')
     
+    cfg.state_shape = env.observation_space.shape
     cfg.n_states = int(env.observation_space.shape[0])
     env_continuous = isinstance(env.action_space, gym.spaces.Box)
     if env_continuous:
@@ -87,7 +88,12 @@ def train(env, agent, cfg):
     if not hasattr(agent, "reward_scaler"):
         agent.reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
 
-    cfg.on_policy = isinstance(agent.memory, ReplayBuffer_on_policy)
+    cfg.on_policy = (
+        isinstance(agent.memory, ReplayBuffer_on_policy) or 
+        isinstance(agent.memory, ReplayBuffer_on_policy_v2) or
+        isinstance(agent.memory, list) and isinstance(agent.memory[0], ReplayBuffer_on_policy)
+    )
+    cfg.use_rnn = hasattr(agent.net, 'reset_hidden')
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(f'./exp/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}_{timestamp}')
     cfg.show()
@@ -118,15 +124,19 @@ def train(env, agent, cfg):
             
             if cfg.on_policy:
                 _action, _log_prob, _value = agent.choose_action(next_state)
-                agent.memory.push((state, action, reward, next_state, done, terminated, log_prob, value, _value))
+                transitions = (state, action, reward, done, terminated, log_prob, value, _value)
+                if cfg.use_rnn:
+                    agent.memory[i % cfg.batch_size].store(transitions)
+                else:
+                    agent.memory.store(transitions)
                 action, log_prob, value = _action, _log_prob, _value
             else:
-                agent.memory.push((state, action, reward, next_state, done))
+                agent.memory.store((state, action, reward, next_state, done))
                 action = agent.choose_action(next_state)
                 
             state = next_state
             
-            if not cfg.use_rnn:
+            if not cfg.use_rnn and agent.memory.size >= cfg.batch_size:
                 monitors = agent.update()
                 log_monitors(writer, monitors, agent, 'train', agent.learn_step)
                 
@@ -134,8 +144,9 @@ def train(env, agent, cfg):
                 break
         
         if cfg.use_rnn:
-            monitors = agent.update()
-            log_monitors(writer, monitors, agent, 'train', agent.learn_step)
+            if i % cfg.batch_size == 0 and i > 0:
+                monitors = agent.update()
+                log_monitors(writer, monitors, agent, 'train', agent.learn_step)
 
         log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'train', i)
         print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')

@@ -270,6 +270,10 @@ class PSCN(nn.Module):
         self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True)
 
     def forward(self, x):
+        _shape = x.shape
+        if len(_shape) > 2:
+            x = x.view(-1, _shape[-1])
+        
         x = self.fc1(x)
 
         x1 = x[:, :self.hidden_dim // 2]
@@ -285,6 +289,9 @@ class PSCN(nn.Module):
         x4 = self.fc4(x)
 
         out = torch.cat([x1, x2, x3, x4], dim=1)
+        
+        if len(_shape) > 2:
+            out = out.view(_shape[0], _shape[1], -1)
         return out
 
 # 将MLP和RNN以3:1的比例融合
@@ -299,7 +306,7 @@ class MLPRNN(nn.Module):
     def forward(self, x, rnn_state: torch.Tensor):
         rnn_linear_out = self.rnn_linear(x)
         rnn_out, rnn_state = self.rnn(x, rnn_state)
-        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
+        out = torch.cat([rnn_linear_out, rnn_out], dim=-1)
         return out, rnn_state
     
 
@@ -308,11 +315,12 @@ class BaseRNNModel(nn.Module):
     def __init__(self, device, hidden_size):
         super(BaseRNNModel, self).__init__()
         self.device = device
-        self.rnn_h = torch.zeros(1, hidden_size, device=self.device, dtype=torch.float)
+        self.hidden_size = hidden_size
+        self.reset_hidden()
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros_like(self.rnn_h, device=self.device, dtype=torch.float)
+        self.rnn_h = torch.zeros(1, self.hidden_size, device=self.device, dtype=torch.float)
         
     @torch.jit.export
     def get_hidden(self):

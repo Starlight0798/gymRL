@@ -16,7 +16,6 @@ class Config(BasicConfig):
         self.lr_start = 1e-3
         self.lr_end = 1e-5
         self.batch_size = 128
-        self.preload_size = 256
         self.memory_capacity = 10000
         self.target_update = 400
 
@@ -60,8 +59,6 @@ class DQN(ModelLoader):
         return self.choose_action(state)
 
     def update(self):
-        if self.memory.size < self.cfg.preload_size:
-            return {}
         states, actions, rewards, next_states, dones = self.memory.sample()
         actions, rewards, dones = actions.view(-1, 1).type(torch.long), rewards.view(-1, 1), \
             dones.view(-1, 1)

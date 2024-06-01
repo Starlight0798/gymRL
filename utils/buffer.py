@@ -1,16 +1,18 @@
 from collections import deque
 import torch
 import numpy as np
+from torch.cuda.amp import autocast
 
 class ReplayBuffer_on_policy:
     def __init__(self, cfg, capacity=10000):
+        self.cfg = cfg
         self.capacity = capacity
         self.buffer = np.empty(capacity, dtype=object)
         self.size = 0
         self.pointer = 0
-        self.device = cfg.device
+        self.adv, self.v_target = None, None
         
-    def push(self, transitions):
+    def store(self, transitions):
         self.buffer[self.pointer] = transitions
         self.size = min(self.size + 1, self.capacity)
         self.pointer = (self.pointer + 1) % self.capacity
@@ -19,17 +21,89 @@ class ReplayBuffer_on_policy:
         self.buffer = np.empty(self.capacity, dtype=object)
         self.size = 0
         self.pointer = 0
+        self.adv, self.v_target = None, None
+    
+    def compute_advantage(self, rewards, dones, dw, values, next_values):
+        with autocast():
+            with torch.no_grad():
+                td_error = rewards + self.cfg.gamma * next_values * (1 - dw) - values
+                td_error = td_error.cpu().detach().numpy()
+                dones = dones.cpu().detach().numpy()
+                adv, gae = [], 0.0
+                for delta, d in zip(td_error[::-1], dones[::-1]):
+                    gae = self.cfg.gamma * self.cfg.lamda * gae * (1 - d) + delta
+                    adv.append(gae)
+                adv.reverse()
+                adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
+                v_target = adv + values
+                adv = (adv - adv.mean()) / (adv.std() + 1e-5)
+                
+        return adv, v_target
         
     def sample(self):
-        states, actions, rewards, next_states, dones, dw, log_probs, values, next_values = map(
-            lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.device), 
+        states, actions, rewards, dones, dw, log_probs, values, next_values = map(
+            lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.cfg.device), 
             zip(*self.buffer[:self.size])
         )
         
         actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
             rewards.view(-1, 1), dones.view(-1, 1), dw.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
         
-        return states, actions, rewards, next_states, dones, dw, log_probs, values, next_values
+        if self.adv is None or self.v_target is None:
+            self.adv, self.v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
+        
+        return states, actions, log_probs, self.adv, self.v_target
+
+class ReplayBuffer_on_policy_v2:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.clear()
+
+    def clear(self):
+        episode_max_steps = min(self.cfg.max_steps, 2000)
+        self.buffer = {
+            's': np.zeros([self.cfg.batch_size, episode_max_steps] + list(self.cfg.state_shape), dtype=np.float32),
+            'a': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.int64),
+            'a_logprob': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'r': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'd': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'dw': np.ones([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'v': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'v_': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.float32),
+            'active': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.int8),
+        }
+        self.size = np.zeros(self.cfg.batch_size, dtype=int)
+        self.episode_num = 0
+
+    def store(self, transitions):
+        s, a, r, d, dw, a_logprob, v, v_ = transitions
+        self.buffer['s'][self.episode_num, self.size[self.episode_num]] = s
+        self.buffer['a'][self.episode_num, self.size[self.episode_num]] = a
+        self.buffer['a_logprob'][self.episode_num, self.size[self.episode_num]] = a_logprob
+        self.buffer['r'][self.episode_num, self.size[self.episode_num]] = r
+        self.buffer['d'][self.episode_num, self.size[self.episode_num]] = d
+        self.buffer['dw'][self.episode_num, self.size[self.episode_num]] = dw
+        self.buffer['v'][self.episode_num, self.size[self.episode_num]] = v
+        self.buffer['v_'][self.episode_num, self.size[self.episode_num]] = v_
+        self.buffer['active'][self.episode_num, self.size[self.episode_num]] = 1
+        self.size[self.episode_num] += 1
+
+    def next_episode(self):
+        self.episode_num += 1
+
+    def sample(self):
+        max_episode_len = self.size.max()
+        return (
+            torch.tensor(self.buffer['s'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['a'][:, :max_episode_len], dtype=torch.long, device=self.cfg.device),
+            torch.tensor(self.buffer['a_logprob'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['r'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['d'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['dw'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['v'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['v_'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+            torch.tensor(self.buffer['active'][:, :max_episode_len], dtype=torch.float32, device=self.cfg.device),
+        )
 
 
 class ReplayBuffer_off_policy:
@@ -41,7 +115,7 @@ class ReplayBuffer_off_policy:
         self.batch_size = cfg.batch_size
         self.device = cfg.device
 
-    def push(self, transitions):
+    def store(self, transitions):
         self.buffer[self.pointer] = transitions
         self.size = min(self.size + 1, self.capacity)
         self.pointer = (self.pointer + 1) % self.capacity

@@ -3,7 +3,7 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
-from torch.utils.data import BatchSampler, SubsetRandomSampler, SequentialSampler
+from torch.utils.data import BatchSampler, SubsetRandomSampler
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
@@ -13,13 +13,13 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
-        self.env_name = 'ALE/MsPacman-v5'
+        self.env_name = 'MsPacmanDeterministic-v4'
         self.render_mode = 'rgb_array'
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 2048
-        self.mini_batch = 64
+        self.batch_size = 16
+        self.mini_batch = 4
         self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.99
@@ -30,7 +30,6 @@ class Config(BasicConfig):
         self.ent_coef = 1e-2
         self.grad_clip = 0.5
         self.use_atari = True
-        self.save_freq = 50
         self.load_model = True
 
 
@@ -44,14 +43,14 @@ class ActorCritic(BaseRNNModel):
         )
         self.fc_head = PSCN(512, 512)
         self.rnn = MLPRNN(512, 512, batch_first=True)
-        self.actor_fc = MLP([512, 128, 5])
+        self.actor_fc = MLP([512, 128, cfg.n_actions])
         self.critic_fc = MLP([512, 64, 1])
 
     def forward(self, s):
         feature = self.conv_layer(s)
         x = self.fc_head(feature)
         out, self.rnn_h = self.rnn(x, self.rnn_h)
-        prob = F.softmax(self.actor_fc(out), dim=1)
+        prob = F.softmax(self.actor_fc(out), dim=-1)
         value = self.critic_fc(out)
         return prob, value
 
@@ -63,10 +62,9 @@ class PPO(ModelLoader):
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
-        self.memory = ReplayBuffer(cfg)
+        self.memory = [ReplayBuffer(cfg, cfg.max_steps) for _ in range(cfg.batch_size)]
         self.learn_step = 0
         self.scaler = GradScaler()
-        cfg.use_rnn = hasattr(self.net, 'reset_hidden')
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -85,50 +83,27 @@ class PPO(ModelLoader):
         action = m.probs.argmax().item()
         return action
 
+
     def update(self):
-        if self.memory.size < self.cfg.batch_size:
-            return {}
-        
-        states, actions, rewards, next_states, dones, dw, old_probs, values, next_values = self.memory.sample()
-        with autocast():
-            with torch.no_grad():
-                td_error = rewards + self.cfg.gamma * next_values * (1 - dw) - values
-                td_error = td_error.cpu().detach().numpy()
-                dones = dones.cpu().detach().numpy()
-                adv, gae = [], 0.0
-                for delta, d in zip(td_error[::-1], dones[::-1]):
-                    gae = self.cfg.gamma * self.cfg.lamda * gae * (1 - d) + delta
-                    adv.append(gae)
-                adv.reverse()
-                adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
-                v_target = adv + values
-                adv = (adv - adv.mean()) / (adv.std() + 1e-5)
-
         losses = np.zeros(5)
-
         for _ in range(self.cfg.epochs):
-            if self.cfg.use_rnn:
-                sampler = BatchSampler(SequentialSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
-            else:
-                sampler = BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False)
-            
-            for indices in sampler:
+            for index in range(self.cfg.batch_size):
+                states, actions, old_probs, adv, v_target = self.memory[index].sample()
                 with autocast():
-                    if self.cfg.use_rnn:
-                        self.net.reset_hidden()
-                    actor_prob, value = self.net(states[indices])
-                    log_probs = torch.log(actor_prob.gather(1, actions[indices]))
-                    ratio = torch.exp(log_probs - old_probs[indices])
-                    surr1 = ratio * adv[indices]
-                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv[indices]
+                    self.net.reset_hidden()
+                    actor_prob, value = self.net(states)
+                    log_probs = torch.log(actor_prob.gather(1, actions))
+                    ratio = torch.exp(log_probs - old_probs)
+                    surr1 = ratio * adv
+                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
 
                     min_surr = torch.min(surr1, surr2)
                     clip_loss = -torch.mean(torch.where(
-                        adv[indices] < 0,
-                        torch.max(min_surr, self.cfg.dual_clip * adv[indices]),
+                        adv < 0,
+                        torch.max(min_surr, self.cfg.dual_clip * adv),
                         min_surr
                     ))
-                    value_loss = F.mse_loss(v_target[indices], value)
+                    value_loss = F.mse_loss(v_target, value)
                     entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
@@ -142,16 +117,17 @@ class PPO(ModelLoader):
                 losses[1] += clip_loss.item()
                 losses[2] += value_loss.item()
                 losses[3] += entropy_loss.item()
-        
+
         self.scheduler.step()
-        self.memory.clear()
+        for i in range(self.cfg.batch_size):
+            self.memory[i].clear()
         self.learn_step += 1
 
         return {
-            'total_loss': losses[0] / self.cfg.epochs,
-            'clip_loss': losses[1] / self.cfg.epochs,
-            'value_loss': losses[2] / self.cfg.epochs,
-            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'total_loss': losses[0] / self.cfg.epochs / self.cfg.batch_size,
+            'clip_loss': losses[1] / self.cfg.epochs / self.cfg.batch_size,
+            'value_loss': losses[2] / self.cfg.epochs / self.cfg.batch_size,
+            'entropy_loss': losses[3] / self.cfg.epochs / self.cfg.batch_size,
             'advantage': adv.mean().item(),
             'lr': self.optimizer.param_groups[0]['lr'],
         }
