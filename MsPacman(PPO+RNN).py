@@ -18,8 +18,8 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 16
-        self.mini_batch = 4
+        self.batch_size = 8
+        self.mini_batch = 2
         self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.99
