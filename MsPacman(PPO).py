@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
-        self.env_name = 'MsPacmanDeterministic-v4'
+        self.env_name = 'ALE/MsPacman-v5'
         self.render_mode = 'rgb_array'
         self.max_steps = 1000
         self.algo_name = 'PPO'

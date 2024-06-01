@@ -376,7 +376,7 @@ class ConvMixer(nn.Module):
 # 管理模型加载与存储
 class ModelLoader:
     def __init__(self, cfg):
-        cfg.save_path = f'./checkpoints/{cfg.algo_name}_{cfg.env_name}.pth'
+        cfg.save_path = f'./checkpoints/{cfg.algo_name}_{cfg.env_name.replace("/", "-")}.pth'
         self.cfg = cfg
         if not os.path.exists(os.path.dirname(cfg.save_path)):
             os.makedirs(os.path.dirname(cfg.save_path))
