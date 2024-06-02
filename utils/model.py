@@ -125,7 +125,7 @@ class ConvBlock(nn.Module):
                  kernel_size=3,
                  stride=1,
                  padding=2,
-                 use_depthwise=False,
+                 use_depthwise=True,
                  activation=nn.PReLU()
                  ):
         super(ConvBlock, self).__init__()
