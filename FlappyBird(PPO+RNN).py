@@ -8,15 +8,16 @@ from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
+import flappy_bird_gymnasium
 
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
-        self.env_name = 'ALE/Tennis-v5'
+        self.env_name = 'FlappyBird-v0'
         self.render_mode = 'rgb_array'
-        self.max_steps = 500
+        self.max_steps = 1000
         self.algo_name = 'PPO'
-        self.train_eps = 15000
+        self.train_eps = 10000
         self.batch_size = 4
         self.epochs = 10
         self.clip = 0.2
@@ -27,26 +28,19 @@ class Config(BasicConfig):
         self.lr_end = 1e-5
         self.ent_coef = 1e-2
         self.grad_clip = 0.5
-        self.use_atari = True
         self.load_model = True
 
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__(device=cfg.device, hidden_size=128)
-        self.conv_layer = ConvBlock(
-            channels=[(3, 16), (16, 32), (32, 64), (64, 128), (128, 256)],
-            output_dim=512,
-            input_shape=(3, 84, 84),
-        )
-        self.fc_head = PSCN(512, 512)
+        self.fc_head = PSCN(cfg.n_states, 512)
         self.rnn = MLPRNN(512, 512, batch_first=True)
         self.actor_fc = MLP([512, 128, cfg.n_actions])
         self.critic_fc = MLP([512, 64, 1])
 
     def forward(self, s):
-        feature = self.conv_layer(s)
-        x = self.fc_head(feature)
+        x = self.fc_head(s)
         out, self.rnn_h = self.rnn(x, self.rnn_h)
         prob = F.softmax(self.actor_fc(out), dim=-1)
         value = self.critic_fc(out)
