@@ -18,7 +18,7 @@ class Config(BasicConfig):
         self.max_steps = 1000
         self.algo_name = 'PPO'
         self.train_eps = 15000
-        self.batch_size = 8
+        self.batch_size = 4
         self.mini_batch = 2
         self.epochs = 10
         self.clip = 0.2
@@ -37,7 +37,7 @@ class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__(device=cfg.device, hidden_size=128)
         self.conv_layer = ConvBlock(
-            channels=[(3, 16), (16, 32), (32, 64), (64, 128), (128, 256), (256, 512)],
+            channels=[(3, 16), (16, 32), (32, 64), (64, 128), (128, 256)],
             output_dim=512,
             input_shape=(3, 84, 84),
         )
@@ -137,12 +137,12 @@ class PPO(ModelLoader):
 
 if __name__ == '__main__':
     cfg = Config()
-    env = make_env(cfg, mode=0)
+    env = make_env(cfg)
     agent = PPO(cfg)
     train(env, agent, cfg)
     
     cfg = Config()
     cfg.render_mode = 'human'
-    env = make_env(cfg, mode=0)
+    env = make_env(cfg)
     agent = PPO(cfg)
     test(env, agent, cfg)

@@ -20,7 +20,7 @@ class Config(BasicConfig):
         self.max_steps = 500
         self.algo_name = 'PPO+RNN'
         self.train_eps = 3000
-        self.batch_size = 8
+        self.batch_size = 4
         self.mini_batch = 2
         self.epochs = 10
         self.clip = 0.2

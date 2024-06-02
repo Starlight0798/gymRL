@@ -125,7 +125,7 @@ class ConvBlock(nn.Module):
                  kernel_size=3,
                  stride=1,
                  padding=2,
-                 use_depthwise=True,
+                 use_depthwise=False,
                  activation=nn.PReLU()
                  ):
         super(ConvBlock, self).__init__()
@@ -156,6 +156,7 @@ class ConvBlock(nn.Module):
             x = dummy_input
             for layer in self.conv_layers:
                 x = layer(x)
+            assert len(x.shape) == 4
             n_features = x.size(1) * x.size(2) * x.size(3)
             self.fc = MLP([n_features, self.output_dim])
             print(f'卷积输出维度：{n_features}')
