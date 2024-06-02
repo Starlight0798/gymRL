@@ -6,7 +6,35 @@
 -  PPO: dual-PPO, clip-PPO, use-RNN, attention, PPG etc.
 -  DQN: rainbow DQN
 
-在离散动作空间的代码探索主要在LunarLander(PPO)和MsPacman(PPO)代码进行，读者可以重点关注。
+经实验，PPO算法加入LSTM(或GRU)提取时序特征后效果显著，读者可以尝试。
+
+## 算法介绍
+
+### PPO（Proximal Policy Optimization）
+
+PPO是一种策略优化算法，通过限制每次策略更新的幅度来稳定训练过程。
+
+### DQN（Deep Q-Network）
+
+DQN使用深度神经网络来逼近Q值函数，并结合经验回放和固定Q目标来稳定训练。
+
+### SAC（Soft Actor-Critic）
+
+SAC是一种最大化策略熵的算法，旨在提高策略的探索能力。
+
+### DDPG（Deep Deterministic Policy Gradient）
+
+DDPG是一种结合了策略梯度和Q学习的算法，适用于连续动作空间。
+
+### TD3（Twin Delayed DDPG）
+
+TD3是对DDPG的改进，通过延迟更新策略网络和目标网络来减少Q值的过估计。
+
+------
+
+我在离散动作空间的代码探索主要在PPO和PPO+RNN代码进行，读者可以重点关注。
+
+以下是一个我认为用来提取特征**效率很高**的网络层：
 
 ```python
 class PSCN(nn.Module):
@@ -61,7 +89,7 @@ tensorboard --logdir=exp
 
 可以直观地看到评估和训练的数据图。
 
-![image-20240407180928966](assets/image-20240407180928966.png)
+<img src="assets/image-20240602232200101.png" alt="image-20240602232200101"  />
 
 如果多条数据线重合在一起影响观看，左边可以取消勾选，如果还是无法解决，建议在exp目录下手动删除不需要的数据文件，然后重启tensorboard即可。理论上eval/reward这条曲线应该是不断上升的，如果不是则需要调参(玄学)。
 
@@ -80,7 +108,11 @@ class Config(BasicConfig):
 
 将其设置成`human`后，可以直接**观看训练过程**：
 
-<img src="assets/image-20240413015536070.png" alt="image-20240413015536070" style="zoom:67%;" />
+<img src="assets/image-20240602231618885.png" alt="image-20240602231618885" style="zoom:67%;" />
+
+## 许可证
+
+本项目采用MIT许可证，详见LICENSE。
 
 ## 建议
 
@@ -96,3 +128,4 @@ class Config(BasicConfig):
 - 使用混合精度，显著优化降低显存使用
 - 使用CosineAnnealingLR调整学习率
 - 网络可使用RNN(LSTM or GRU)，需继承*BaseRNNModel*
+
