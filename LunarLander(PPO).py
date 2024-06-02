@@ -16,7 +16,6 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.unwrapped = True
-        self.max_steps = 500
         self.algo_name = 'PPO'
         self.train_eps = 2000
         self.batch_size = 1024
@@ -80,7 +79,7 @@ class PPO(ModelLoader):
         losses = np.zeros(5)
 
         for _ in range(self.cfg.epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size)), self.cfg.mini_batch, drop_last=False):
+            for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size())), self.cfg.mini_batch, drop_last=False):
                 with autocast():
                     actor_prob, value = self.net(states[indices])
                     log_probs = torch.log(actor_prob.gather(1, actions[indices]))

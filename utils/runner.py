@@ -16,7 +16,7 @@ class BasicConfig:
         self.train_eps = 500
         self.test_eps = 3
         self.eval_freq = 10
-        self.max_steps = 3000
+        self.max_steps = 20000
         self.lr_start = 1e-3
         self.lr_end = 1e-5
         self.gamma = 0.99

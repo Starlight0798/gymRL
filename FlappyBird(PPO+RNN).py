@@ -15,7 +15,6 @@ class Config(BasicConfig):
         super(Config, self).__init__()
         self.env_name = 'FlappyBird-v0'
         self.render_mode = 'rgb_array'
-        self.max_steps = 2500
         self.algo_name = 'PPO'
         self.train_eps = 10000
         self.batch_size = 4
@@ -54,7 +53,7 @@ class PPO(ModelLoader):
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
-        self.memory = [ReplayBuffer(cfg, cfg.max_steps) for _ in range(cfg.batch_size)]
+        self.memory = [ReplayBuffer(cfg) for _ in range(cfg.batch_size)]
         self.learn_step = 0
         self.scaler = GradScaler()
 

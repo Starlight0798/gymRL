@@ -4,24 +4,20 @@ import numpy as np
 from torch.cuda.amp import autocast
 
 class ReplayBuffer_on_policy:
-    def __init__(self, cfg, capacity=10000):
+    def __init__(self, cfg):
         self.cfg = cfg
-        self.capacity = capacity
-        self.buffer = np.empty(capacity, dtype=object)
-        self.size = 0
-        self.pointer = 0
+        self.buffer = []
         self.adv, self.v_target = None, None
         
     def store(self, transitions):
-        self.buffer[self.pointer] = transitions
-        self.size = min(self.size + 1, self.capacity)
-        self.pointer = (self.pointer + 1) % self.capacity
+        self.buffer.append(transitions)
         
     def clear(self):
-        self.buffer = np.empty(self.capacity, dtype=object)
-        self.size = 0
-        self.pointer = 0
+        self.buffer = []
         self.adv, self.v_target = None, None
+        
+    def size(self):
+        return len(self.buffer)
     
     def compute_advantage(self, rewards, dones, dw, values, next_values):
         with autocast():
@@ -43,7 +39,7 @@ class ReplayBuffer_on_policy:
     def sample(self):
         states, actions, rewards, dones, dw, log_probs, values, next_values = map(
             lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.cfg.device), 
-            zip(*self.buffer[:self.size])
+            zip(*self.buffer)
         )
         
         actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
@@ -53,6 +49,7 @@ class ReplayBuffer_on_policy:
             self.adv, self.v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
         
         return states, actions, log_probs, self.adv, self.v_target
+
 
 class ReplayBuffer_on_policy_v2:
     def __init__(self, cfg):
