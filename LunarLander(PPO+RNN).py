@@ -4,7 +4,6 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.distributions import Categorical
-from torch.utils.data import BatchSampler, SubsetRandomSampler
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
@@ -21,7 +20,6 @@ class Config(BasicConfig):
         self.algo_name = 'PPO+RNN'
         self.train_eps = 3000
         self.batch_size = 4
-        self.mini_batch = 2
         self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.99
@@ -82,34 +80,31 @@ class PPO(ModelLoader):
     def update(self):
         losses = np.zeros(5)
         for _ in range(self.cfg.epochs):
-            for indices in BatchSampler(SubsetRandomSampler(range(self.cfg.batch_size)), self.cfg.mini_batch, drop_last=False):
-                loss = torch.zeros(self.cfg.mini_batch, device=self.cfg.device)
-                for i, index in enumerate(indices):
-                    states, actions, old_probs, adv, v_target = self.memory[index].sample()
-                    with autocast():
-                        self.net.reset_hidden()
-                        actor_prob, value = self.net(states)
-                        log_probs = torch.log(actor_prob.gather(1, actions))
-                        ratio = torch.exp(log_probs - old_probs)
-                        surr1 = ratio * adv
-                        surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
+            for index in np.random.permutation(self.cfg.batch_size):
+                states, actions, old_probs, adv, v_target = self.memory[index].sample()
+                with autocast():
+                    self.net.reset_hidden()
+                    actor_prob, value = self.net(states)
+                    log_probs = torch.log(actor_prob.gather(1, actions))
+                    ratio = torch.exp(log_probs - old_probs)
+                    surr1 = ratio * adv
+                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
 
-                        min_surr = torch.min(surr1, surr2)
-                        clip_loss = -torch.mean(torch.where(
-                            adv < 0,
-                            torch.max(min_surr, self.cfg.dual_clip * adv),
-                            min_surr
-                        ))
-                        value_loss = F.mse_loss(v_target, value)
-                        entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
-                        loss[i] = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
+                    min_surr = torch.min(surr1, surr2)
+                    clip_loss = -torch.mean(torch.where(
+                        adv < 0,
+                        torch.max(min_surr, self.cfg.dual_clip * adv),
+                        min_surr
+                    ))
+                    value_loss = F.mse_loss(v_target, value)
+                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                    loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
-                        losses[0] += loss[i].item()
-                        losses[1] += clip_loss.item()
-                        losses[2] += value_loss.item()
-                        losses[3] += entropy_loss.item()
+                    losses[0] += loss.item()
+                    losses[1] += clip_loss.item()
+                    losses[2] += value_loss.item()
+                    losses[3] += entropy_loss.item()
 
-                loss = loss.mean()
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)

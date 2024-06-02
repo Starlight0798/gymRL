@@ -54,7 +54,7 @@ def make_env(cfg, **kwargs):
     use_rgb = len(s) == 3 and s[2] in [1, 3]
     if cfg.use_atari:
         frame_skip = 4 if 'NoFrameskip' in cfg.env_name else 1
-        env = AtariPreprocessing(env, grayscale_obs=False, terminal_on_life_loss=False,
+        env = AtariPreprocessing(env, grayscale_obs=False, terminal_on_life_loss=True,
                                  scale_obs=True, frame_skip=frame_skip)
     if use_rgb:
         env = PyTorchFrame(env)
