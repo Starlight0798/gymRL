@@ -16,7 +16,7 @@ class Config(BasicConfig):
         self.env_name = 'FlappyBird-v0'
         self.render_mode = 'rgb_array'
         self.algo_name = 'PPO'
-        self.train_eps = 10000
+        self.train_eps = 5000
         self.batch_size = 4
         self.epochs = 10
         self.clip = 0.2

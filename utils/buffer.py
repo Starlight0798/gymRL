@@ -57,7 +57,7 @@ class ReplayBuffer_on_policy_v2:
         self.clear()
 
     def clear(self):
-        episode_max_steps = min(self.cfg.max_steps, 2000)
+        episode_max_steps = self.cfg.max_steps
         self.buffer = {
             's': np.zeros([self.cfg.batch_size, episode_max_steps] + list(self.cfg.state_shape), dtype=np.float32),
             'a': np.zeros([self.cfg.batch_size, episode_max_steps], dtype=np.int64),
