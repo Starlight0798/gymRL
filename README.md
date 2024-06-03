@@ -118,7 +118,7 @@ class Config(BasicConfig):
 
 对DQN感兴趣的读者可以使用`CartPole(RDQN)`，即`Rainbow-DQN`。如果是初学者，建议先看`CartPole(DQN)`，这是DQN算法的基本实现，其它如DDQN，PER, DUEL均是在其基础上的改进实验。其中改进最显著的方法是DDQN(double-DQN)，PER和DUEL并不是很显著，并且会降低训练速度，因此读者可以参照只使用DDQN。
 
-对PPO感兴趣的读者可以参考`LunarLander(PPO)`，使用了RNN，PSCN等技巧。
+对PPO感兴趣的读者可以参考其中PPO以及PPO+RNN的算法，使用了RNN，PSCN等技巧。
 
 对于连续动作空间，最推荐使用的算法是TD3，参考`Pendulum(TD3)`。离散空间`DQN`和`PPO`均可。
 
@@ -128,4 +128,5 @@ class Config(BasicConfig):
 - 使用混合精度，显著优化降低显存使用
 - 使用CosineAnnealingLR调整学习率
 - 网络可使用RNN(LSTM or GRU)，需继承*BaseRNNModel*
+- 使用PReLU替代ReLU，减少”神经元死亡“现象
 
