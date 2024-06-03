@@ -103,6 +103,7 @@ class PPO(ModelLoader):
                     losses[1] += clip_loss.item()
                     losses[2] += value_loss.item()
                     losses[3] += entropy_loss.item()
+                    losses[4] += adv.mean().item()
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -120,7 +121,7 @@ class PPO(ModelLoader):
             'clip_loss': losses[1] / self.cfg.epochs / self.cfg.batch_size,
             'value_loss': losses[2] / self.cfg.epochs / self.cfg.batch_size,
             'entropy_loss': losses[3] / self.cfg.epochs / self.cfg.batch_size,
-            'advantage': adv.mean().item(),
+            'advantage': losses[4] / self.cfg.epochs / self.cfg.batch_size,
             'lr': self.optimizer.param_groups[0]['lr'],
         }
 
