@@ -15,7 +15,6 @@ class Config(BasicConfig):
         super(Config, self).__init__()
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
-        self.unwrapped = True
         self.algo_name = 'PPO+RNN'
         self.train_eps = 2000
         self.batch_size = 4

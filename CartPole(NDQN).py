@@ -22,9 +22,9 @@ class Config(BasicConfig):
 class DQNnet(nn.Module):
     def __init__(self, cfg):
         super(DQNnet, self).__init__()
-        self.fc = MLP([cfg.n_states, 64], last_act=True)
-        self.fc_a = MLP([64, 32, cfg.n_actions], linear=NoisyLinear)
-        self.fc_v = MLP([64, 32, 1], linear=NoisyLinear)
+        self.fc = MLP([cfg.n_states, 16, 32], last_act=True)
+        self.fc_a = MLP([32, cfg.n_actions], linear=NoisyLinear)
+        self.fc_v = MLP([32, 1], linear=NoisyLinear)
 
     def forward(self, s):
         x = self.fc(s)

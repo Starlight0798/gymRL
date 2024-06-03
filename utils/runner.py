@@ -136,7 +136,7 @@ def train(env, agent, cfg):
                 
             state = next_state
             
-            if not cfg.use_rnn and agent.memory.size >= cfg.batch_size:
+            if not cfg.use_rnn and agent.memory.size() >= cfg.batch_size:
                 monitors = agent.update()
                 log_monitors(writer, monitors, agent, 'train', agent.learn_step)
                 

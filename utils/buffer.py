@@ -106,7 +106,7 @@ class ReplayBuffer_on_policy_v2:
 class ReplayBuffer_off_policy:
     def __init__(self, cfg):
         self.buffer = np.empty(cfg.memory_capacity, dtype=object)
-        self.size = 0
+        self.is_full = False
         self.pointer = 0
         self.capacity = cfg.memory_capacity
         self.batch_size = cfg.batch_size
@@ -114,20 +114,26 @@ class ReplayBuffer_off_policy:
 
     def store(self, transitions):
         self.buffer[self.pointer] = transitions
-        self.size = min(self.size + 1, self.capacity)
         self.pointer = (self.pointer + 1) % self.capacity
+        if self.pointer == 0:
+            self.is_full = True
 
     def clear(self):
         self.buffer = np.empty(self.capacity, dtype=object)
-        self.size = 0
         self.pointer = 0
+        self.is_full = False
 
     def sample(self):
-        batch_size = min(self.batch_size, self.size)
-        indices = np.random.choice(self.size, batch_size, replace=False)
+        batch_size = min(self.batch_size, self.size())
+        indices = np.random.choice(self.size(), batch_size, replace=False)
         samples = map(lambda x: torch.tensor(np.array(x), dtype=torch.float32,
                                              device=self.device), zip(*self.buffer[indices]))
         return samples
+    
+    def size(self):
+        if self.is_full:
+            return self.capacity
+        return self.pointer
     
     
 # numpy实现环形队列存储
