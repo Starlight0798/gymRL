@@ -32,11 +32,11 @@ class Config(BasicConfig):
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=32)
-        self.fc_head = MLP([cfg.n_states, 128])
-        self.rnn = MLPRNN(128, 128, batch_first=True)
-        self.actor_fc = MLP([128, cfg.n_actions])
-        self.critic_fc = MLP([128, 16, 1])
+        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=64)
+        self.fc_head = MLP([cfg.n_states, 256])
+        self.rnn = MLPRNN(256, 256, batch_first=True)
+        self.actor_fc = MLP([256, 64, cfg.n_actions])
+        self.critic_fc = MLP([256, 32, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
