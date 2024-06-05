@@ -51,7 +51,7 @@ def log_monitors(writer, monitors, agent, phase, step):
 def make_env(cfg, **kwargs):
     env = gym.make(cfg.env_name, render_mode=cfg.render_mode, **kwargs)
     s = env.observation_space.shape
-    use_rgb = len(s) == 3 and s[2] in [1, 3]
+    use_rgb = (len(s) == 3 and s[2] in [1, 3]) if s is not None else False
     if cfg.use_atari:
         frame_skip = 4 if 'NoFrameskip' in cfg.env_name else 1
         env = AtariPreprocessing(env, grayscale_obs=False, terminal_on_life_loss=True,
@@ -203,6 +203,23 @@ def test(env, agent, cfg):
         print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}, 步数:{ep_step:.0f}')
     print('结束测试!')
     env.close()
+    
+    
+class BenchMark:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.env = None
+        self.agent = None
+        
+    def train(self):
+        self.env = make_env(cfg)
+        train(self.env, self.agent, self.cfg)
+        
+    def test(self):
+        cfg.render_mode = 'human'
+        self.env = make_env(cfg)
+        test(self.env, self.agent, self.cfg)
+        
     
     
 

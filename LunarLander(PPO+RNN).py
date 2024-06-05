@@ -1,5 +1,4 @@
 import numpy as np
-from copy import deepcopy
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
@@ -16,7 +15,7 @@ class Config(BasicConfig):
         self.env_name = 'LunarLander-v2'
         self.render_mode = 'rgb_array'
         self.algo_name = 'PPO+RNN'
-        self.train_eps = 2000
+        self.train_eps = 5000
         self.batch_size = 4
         self.epochs = 10
         self.clip = 0.2
@@ -33,7 +32,7 @@ class Config(BasicConfig):
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__(device=cfg.device, hidden_size=64)
-        self.fc_head = MLP([cfg.n_states, 256])
+        self.fc_head = PSCN(cfg.n_states, 256)
         self.rnn = MLPRNN(256, 256, batch_first=True)
         self.actor_fc = MLP([256, 64, cfg.n_actions])
         self.critic_fc = MLP([256, 32, 1])
