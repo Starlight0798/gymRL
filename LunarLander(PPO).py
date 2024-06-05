@@ -24,7 +24,7 @@ class Config(BasicConfig):
         self.gamma = 0.99
         self.dual_clip = 3.0
         self.val_coef = 0.5
-        self.lr_start = 1e-3
+        self.lr_start = 1e-4
         self.lr_end = 1e-5
         self.ent_coef = 1e-2
         self.grad_clip = 0.5
@@ -34,9 +34,9 @@ class Config(BasicConfig):
 class ActorCritic(nn.Module):
     def __init__(self, cfg):
         super(ActorCritic, self).__init__()
-        self.fc_head = PSCN(cfg.n_states, 128)
-        self.actor_fc = MLP([128, cfg.n_actions])
-        self.critic_fc = MLP([128, 16, 1])
+        self.fc_head = PSCN(cfg.n_states, 256)
+        self.actor_fc = MLP([256, 64, cfg.n_actions])
+        self.critic_fc = MLP([256, 32, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
