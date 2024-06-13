@@ -81,7 +81,6 @@ class PPO(ModelLoader):
                 states, actions, old_probs, adv, v_target = self.memory[index].sample()
                 with autocast():
                     self.net.reset_hidden()
-                    print(states.shape)
                     actor_prob, value = self.net(states)
                     log_probs = torch.log(actor_prob.gather(1, actions))
                     ratio = torch.exp(log_probs - old_probs)
