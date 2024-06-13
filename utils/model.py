@@ -171,7 +171,7 @@ class ConvBlock(nn.Module):
     
 
 # 位置编码
-class PositionalEncoding(torch.nn.Module):
+class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(PositionalEncoding, self).__init__()
         # Create a matrix of shape (max_len, d_model)
