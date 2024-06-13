@@ -13,8 +13,8 @@ class Config(BasicConfig):
         self.env_name = 'CartPole-v1'
         self.algo_name = 'NDQN'
         self.train_eps = 500
-        self.lr_start = 1e-3
-        self.lr_end = 1e-5
+        self.lr_start = 5e-4
+        self.lr_end = 5e-5
         self.batch_size = 128
         self.memory_capacity = 10000
         self.target_update = 400
@@ -41,7 +41,7 @@ class DQN(ModelLoader):
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps, eta_min=cfg.lr_end)
         self.cfg = cfg
         self.learn_step = 0
         self.predict_step = 0
