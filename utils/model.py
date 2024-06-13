@@ -29,12 +29,13 @@ class MLP(nn.Module):
                  activation=nn.PReLU(),
                  last_act=False,
                  use_norm=False,
-                 linear=nn.Linear
+                 linear=nn.Linear,
+                 *args, **kwargs
                  ):
         super(MLP, self).__init__()
         layers = []
         for i in range(len(dim_list) - 1):
-            layer = initialize_weights(linear(dim_list[i], dim_list[i + 1]))
+            layer = initialize_weights(linear(dim_list[i], dim_list[i + 1], *args, **kwargs))
             layers.append(layer)
             if i < len(dim_list) - 2:
                 if use_norm:
@@ -167,97 +168,74 @@ class ConvBlock(nn.Module):
         flat = torch.flatten(features, 1) 
         out = self.fc(flat)
         return out
+    
+
+# 位置编码
+class PositionalEncoding(torch.nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        # Create a matrix of shape (max_len, d_model)
+        pe = torch.zeros(max_len, d_model)
+        # Create a position index (0, 1, 2, ..., max_len-1)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        # Create a dimension index (0, 1, 2, ..., d_model/2-1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        # Apply sine to even indices in the array; 2i
+        pe[:, 0::2] = torch.sin(position * div_term)
+        # Apply cosine to odd indices in the array; 2i+1
+        pe[:, 1::2] = torch.cos(position * div_term)
+        # Add a new dimension to make the shape (1, max_len, d_model)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        # Register the positional encoding matrix as a buffer
+        self.register_buffer('pe', pe)
+        
+    def forward(self, x):
+        # Add positional encoding to input tensor
+        # x shape: (batch_size, seq_len, d_model)
+        x = x + self.pe[:x.size(0), :]
+        return x
 
 
 # 多头注意力机制
 class MultiHeadAttention(nn.Module):
-    def __init__(self, 
-                 d_model, 
-                 n_heads, 
-                 d_k=None, 
-                 d_v=None, 
-                 out=None,
-                 act=nn.ReLU(),
-                 last_act=True,
-                 dropout=0.1,
-                 ):
+    def __init__(self, embed_size, num_heads):
         super(MultiHeadAttention, self).__init__()
-        if d_k is None or d_v is None:
-            assert d_model % n_heads == 0
-            self.d_k = self.d_v = d_model // n_heads
-        else:
-            self.d_k = d_k
-            self.d_v = d_v
-        self.out_dim = d_model if out is None else out
-        self.n_heads = n_heads
-        self.d_model = d_model
-        self.dropout = nn.Dropout(dropout)
-        self.Q = MLP([d_model, n_heads * self.d_k], act)
-        self.K = MLP([d_model, n_heads * self.d_k], act)
-        self.V = MLP([d_model, n_heads * self.d_v], act)
-        if last_act:
-            self.out = MLP([n_heads * self.d_v, self.out_dim], act, last_act=True)
-        else:
-            self.out = MLP([n_heads * self.d_v, self.out_dim], act)
-
-    def forward(self, q, k, v, mask=None):
-        batch_size = q.size(0)
-        q = self.Q(q).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        k = self.K(k).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        v = self.V(v).view(batch_size, -1, self.n_heads, self.d_v).transpose(1, 2)
-        scores = self.attention(q, k, v, self.d_k, mask)
-        concat = (scores.transpose(1, 2).contiguous()
-                  .view(batch_size, self.n_heads * self.d_v))
-        output = self.out(concat)
-        return output
-
-    def attention(self, q, k, v, d_k, mask=None):
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-            scores = scores.masked_fill(mask == 0, -1e9)
-        scores = F.softmax(scores, dim=-1)
-        scores = self.dropout(scores)
-        output = torch.matmul(scores, v)
-        return output
-    
-# 编码器层
-class EncoderLayer(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.1):
-        super(EncoderLayer, self).__init__()
-        self.attn = MultiHeadAttention(d_model, n_heads)
-        self.dropout = nn.Dropout(dropout)
-        self.ln1 = nn.LayerNorm(d_model)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.ffn = MLP([d_model, d_model, d_model])
-
-    def forward(self, x, mask=None):
-        x = x + self.dropout(self.attn(x, x, x, mask))
-        x = self.ln1(x)
-        x = x + self.dropout(self.ffn(x))
-        x = self.ln2(x)
-        return x
-
-# 解码器层
-class DecoderLayer(nn.Module):
-    def __init__(self, d_model, n_heads, dropout=0.1):
-        super(DecoderLayer, self).__init__()
-        self.attn1 = MultiHeadAttention(d_model, n_heads)
-        self.attn2 = MultiHeadAttention(d_model, n_heads)
-        self.dropout = nn.Dropout(dropout)
-        self.ln1 = nn.LayerNorm(d_model)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.ln3 = nn.LayerNorm(d_model)
-        self.ffn = MLP([d_model, d_model, d_model])
+        assert embed_size % num_heads == 0, "Embedding size needs to be divisible by num_heads"
         
-    def forward(self, x, enc_out, src_mask=None, tgt_mask=None):
-        x = x + self.dropout(self.attn1(x, x, x, tgt_mask))
-        x = self.ln1(x)
-        x = x + self.dropout(self.attn2(x, enc_out, enc_out, src_mask))
-        x = self.ln2(x)
-        x = x + self.dropout(self.ffn(x))
-        x = self.ln3(x)
-        return x
+        self.embed_size = embed_size
+        self.num_heads = num_heads
+        self.head_dim = embed_size // num_heads
+        
+        self.values = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.keys = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.queries = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.fc_out = nn.Linear(num_heads * self.head_dim, embed_size)
+        
+    def forward(self, values, keys, query, mask=None):
+        N = query.shape[0]  # batch size
+        value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
+        
+        # Split embedding into self.num_heads pieces
+        values = values.reshape(N, value_len, self.num_heads, self.head_dim)
+        keys = keys.reshape(N, key_len, self.num_heads, self.head_dim)
+        query = query.reshape(N, query_len, self.num_heads, self.head_dim)
+        
+        values = self.values(values)
+        keys = self.keys(keys)
+        queries = self.queries(query)
+        
+        # Attention(Q, K, V) = softmax((Q * K^T) / sqrt(d_k)) * V
+        energy = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
+        if mask is not None:
+            energy = energy.masked_fill(mask == 0, float("-1e20"))
+        
+        attention = torch.softmax(energy / (self.head_dim ** 0.5), dim=3)
+        out = torch.einsum("nhql,nlhd->nqhd", [attention, values]).reshape(N, query_len, self.num_heads * self.head_dim)
+        
+        out = self.fc_out(out)
+        return out
+    
+    
 
 # 一种兼顾宽度和深度的全连接层，提取信息效率更高
 class PSCN(nn.Module):
