@@ -17,8 +17,8 @@ class BasicConfig:
         self.test_eps = 3
         self.eval_freq = 10
         self.max_steps = 20000
-        self.lr_start = 1e-3
-        self.lr_end = 1e-5
+        self.lr_start = 5e-4
+        self.lr_end = 5e-5
         self.gamma = 0.99
         self.lamda = 0.95
         self.n_states = None

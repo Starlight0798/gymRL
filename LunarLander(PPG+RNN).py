@@ -22,8 +22,8 @@ class Config(BasicConfig):
         self.gamma = 0.99
         self.dual_clip = 3.0
         self.val_coef = 0.5
-        self.lr_start = 1e-4
-        self.lr_end = 1e-5
+        self.lr_start = 5e-4
+        self.lr_end = 5e-5
         self.ent_coef = 1e-2
         self.grad_clip = 0.5
         self.load_model = True
@@ -55,7 +55,7 @@ class PPG(ModelLoader):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // 4, eta_min=cfg.lr_end)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps, eta_min=cfg.lr_end)
         self.memory = [ReplayBuffer(cfg) for _ in range(cfg.batch_size)]
         self.learn_step = 0
         self.scaler = GradScaler()
