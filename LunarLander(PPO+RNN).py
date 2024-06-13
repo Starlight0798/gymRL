@@ -51,7 +51,7 @@ class PPO(ModelLoader):
         self.cfg = cfg
         self.net = torch.jit.script(ActorCritic(cfg).to(cfg.device))
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start, eps=1e-5, amsgrad=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps, eta_min=cfg.lr_end)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // cfg.batch_size, eta_min=cfg.lr_end)
         self.memory = [ReplayBuffer(cfg) for _ in range(cfg.batch_size)]
         self.learn_step = 0
         self.scaler = GradScaler()
