@@ -1,8 +1,8 @@
 gym
+swig
 gymnasium
 gymnasium[atari]
 gymnasium[accept-rom-license]
-swig
 gymnasium[box2d]
 flappy-bird-gymnasium
 torch
