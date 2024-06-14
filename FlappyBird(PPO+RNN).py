@@ -37,8 +37,8 @@ class ActorCritic(BaseRNNModel):
             PSCN(512, 512)
         )
         self.rnn = MLPRNN(512, 512, batch_first=True)
-        self.actor_fc = MLP([512, 128, cfg.n_actions])
-        self.critic_fc = MLP([512, 128, 32, 1])
+        self.actor_fc = MLP([512, 64, cfg.n_actions])
+        self.critic_fc = MLP([512, 64, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
