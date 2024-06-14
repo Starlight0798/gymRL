@@ -1,7 +1,6 @@
 from torch import nn
 import torch
 import numpy as np
-import math
 from torch.nn import functional as F
 import os
 from utils.buffer import Queue
@@ -14,7 +13,7 @@ def initialize_weights(layer, init_type='orthogonal', nonlinearity='relu'):
         elif init_type == 'xavier':
             nn.init.xavier_uniform_(layer.weight)   # xavier初始化, 适合激活函数为tanh和sigmoid
         elif init_type == 'orthogonal':
-            nn.init.orthogonal_(layer.weight, gain=sqrt(2))       # 正交初始化，适合激活函数为ReLU
+            nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))       # 正交初始化，适合激活函数为ReLU
         else:       
             raise ValueError(f"Unknown initialization type: {init_type}")
         
@@ -85,12 +84,12 @@ class NoisyLinear(nn.Module):
         return F.linear(x, weight, bias)
 
     def reset_parameters(self):
-        mu_range = 1 / math.sqrt(self.in_features)
+        mu_range = 1 / np.sqrt(self.in_features)
         self.weight_mu.data.uniform_(-mu_range, mu_range)
         self.bias_mu.data.uniform_(-mu_range, mu_range)
 
-        self.weight_sigma.data.fill_(self.sigma_init / math.sqrt(self.in_features))
-        self.bias_sigma.data.fill_(self.sigma_init / math.sqrt(self.out_features))  # 这里要除以out_features
+        self.weight_sigma.data.fill_(self.sigma_init / np.sqrt(self.in_features))
+        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_features))  # 这里要除以out_features
 
     @staticmethod
     def scale_noise(size):
@@ -181,7 +180,7 @@ class PositionalEncoding(nn.Module):
         # Create a position index (0, 1, 2, ..., max_len-1)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         # Create a dimension index (0, 1, 2, ..., d_model/2-1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
         # Apply sine to even indices in the array; 2i
         pe[:, 0::2] = torch.sin(position * div_term)
         # Apply cosine to odd indices in the array; 2i+1
