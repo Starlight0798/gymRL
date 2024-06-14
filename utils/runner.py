@@ -1,14 +1,17 @@
 import gymnasium as gym
 import numpy as np
 import torch
-import time
+import time, sys
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import AtariPreprocessing
 from utils.normalization import Normalization, RewardScaling
 from utils.env_wrappers import PyTorchFrame
 from utils.buffer import *
+from loguru import logger
 
 np.random.seed(int(time.time()))
+logger.remove()
+logger.add(sys.stdout, level='INFO', format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>")
 
 class BasicConfig:
     def __init__(self):
@@ -41,7 +44,6 @@ class BasicConfig:
         print('-' * 60)
 
     
-    
 def log_monitors(writer, monitors, agent, phase, step):
     for key, value in monitors.items():
         if not np.isnan(value):
@@ -62,8 +64,8 @@ def make_env(cfg, **kwargs):
     if cfg.unwrapped:
         env = env.unwrapped
         
-    print(f'观测空间 = {env.observation_space}')
-    print(f'动作空间 = {env.action_space}')
+    logger.info(f'观测空间 = {env.observation_space}')
+    logger.info(f'动作空间 = {env.action_space}')
     
     cfg.state_shape = env.observation_space.shape
     cfg.n_states = int(env.observation_space.shape[0])
@@ -78,15 +80,17 @@ def make_env(cfg, **kwargs):
 
 
 def train(env, agent, cfg):
-    print('开始训练!')
+    logger.info('Start training!')
     
     if cfg.load_model:
         agent.load_model()
     
     if not hasattr(agent, "state_norm"):
         agent.state_norm = Normalization(shape=env.observation_space.shape)
+        logger.debug('Add state normalization!')
     if not hasattr(agent, "reward_scaler"):
         agent.reward_scaler = RewardScaling(shape=1, gamma=cfg.gamma)
+        logger.debug('Add reward scaling!')
 
     cfg.on_policy = (
         isinstance(agent.memory, ReplayBuffer_on_policy) or 
@@ -143,13 +147,12 @@ def train(env, agent, cfg):
             if done:
                 break
         
-        if cfg.use_rnn:
-            if i % cfg.batch_size == 0 and i > 0:
-                monitors = agent.update()
-                log_monitors(writer, monitors, agent, 'train', agent.learn_step)
+        if cfg.use_rnn and i % cfg.batch_size == 0 and i > 0:
+            monitors = agent.update()
+            log_monitors(writer, monitors, agent, 'train', agent.learn_step)
 
         log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'train', i)
-        print(f'回合:{i + 1}/{cfg.train_eps}  奖励:{ep_reward:.0f}  步数:{ep_step:.0f}')
+        logger.info(f'Episode:{i + 1}/{cfg.train_eps}  Reward:{ep_reward:.0f}  Step:{ep_step:.0f}')
         
         if (i + 1) % cfg.eval_freq == 0:
             tools = {'writer': writer}
@@ -158,7 +161,7 @@ def train(env, agent, cfg):
         if (i + 1) % cfg.save_freq == 0:
             agent.save_model()    
             
-    print('完成训练!')
+    logger.info('Finish training!')
     agent.save_model()
     env.close()
     writer.close()
@@ -182,9 +185,8 @@ def evaluate(env, agent, cfg, tools):
     log_monitors(writer, {'reward': ep_reward, 'step': ep_step}, agent, 'eval', agent.learn_step)
 
 
-
 def test(env, agent, cfg):
-    print('开始测试!')
+    logger.info('Start test!')
     agent.load_model()
     for i in range(cfg.test_eps):
         ep_reward, ep_step, done = 0.0, 0, False
@@ -200,25 +202,29 @@ def test(env, agent, cfg):
             state = next_state
             ep_reward += reward
             done = terminated or truncated
-        print(f'回合:{i + 1}/{cfg.test_eps}, 奖励:{ep_reward:.3f}, 步数:{ep_step:.0f}')
-    print('结束测试!')
+        logger.info(f'Episode:{i + 1}/{cfg.train_eps}  Reward:{ep_reward:.0f}  Step:{ep_step:.0f}')
+    logger.info('Finish test!')
     env.close()
     
     
 class BenchMark:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.env = None
-        self.agent = None
-        
-    def train(self):
-        self.env = make_env(cfg)
-        train(self.env, self.agent, self.cfg)
-        
-    def test(self):
+    
+    @logger.catch(reraise=True)
+    @staticmethod
+    def train(algo, config):
+        cfg = config()
+        env = make_env(cfg)     # must be called before agent is created
+        agent = algo(cfg)
+        train(env, agent, cfg)
+    
+    @logger.catch(reraise=True) 
+    @staticmethod
+    def test(algo, config):
+        cfg = config()
         cfg.render_mode = 'human'
-        self.env = make_env(cfg)
-        test(self.env, self.agent, self.cfg)
+        env = make_env(cfg)
+        agent = algo(cfg)
+        test(env, agent, cfg)
         
     
     

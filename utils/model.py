@@ -5,6 +5,7 @@ import math
 from torch.nn import functional as F
 import os
 from utils.buffer import Queue
+from loguru import logger
 
 def initialize_weights(layer, init_type='kaiming', nonlinearity='leaky_relu'):
     if isinstance(layer, (nn.Linear, nn.Conv2d)):
@@ -33,6 +34,7 @@ class MLP(nn.Module):
                  *args, **kwargs
                  ):
         super(MLP, self).__init__()
+        assert dim_list, "Dim list can't be empty!"
         layers = []
         for i in range(len(dim_list) - 1):
             layer = initialize_weights(linear(dim_list[i], dim_list[i + 1], *args, **kwargs))
@@ -160,7 +162,7 @@ class ConvBlock(nn.Module):
             assert len(x.shape) == 4
             n_features = x.size(1) * x.size(2) * x.size(3)
             self.fc = MLP([n_features, self.output_dim])
-            print(f'卷积输出维度：{n_features}')
+            logger.info(f'ConvBlock output dim: {n_features}')
 
 
     def forward(self, x):
@@ -374,37 +376,39 @@ class ModelLoader:
             exclude_keys = ['state_buffer', 'cfg', 'memory']
             if key in exclude_keys:
                 continue
+            logger.debug(f"Save {key}")
             if hasattr(value, 'state_dict'):
                 state[f'{key}_state_dict'] = value.state_dict()
             else:
                 state[key] = value
         torch.save(state, self.cfg.save_path)
         self._print_model_summary()
-        print(f"模型保存到 {self.cfg.save_path}")
+        logger.info(f"Save model to {self.cfg.save_path}")
 
     def load_model(self):
-        try:
+        with logger.catch(message="Model loading failed."):
             checkpoint = torch.load(self.cfg.save_path, map_location=self.cfg.device)
             for key, value in checkpoint.items():
                 exclude_keys = ['state_buffer', 'cfg', 'memory']
                 if key in exclude_keys:
                     continue
+                logger.debug(f"Load {key}")
                 if key.endswith('_state_dict'):
                     attr_name = key.replace('_state_dict', '')
                     if hasattr(self, attr_name):
                         getattr(self, attr_name).load_state_dict(value)
                 else:
                     setattr(self, key, value)
-            print(f"模型加载： {self.cfg.save_path}")
-        except FileNotFoundError as e:
-            print(f'模型加载失败：{str(e)}')   
+            logger.info(f"Load model： {self.cfg.save_path}")
+            
             
     def _print_model_summary(self):
-        if hasattr(self, 'model'):
-            num_params = sum(p.numel() for p in self.model.parameters())
-            print(f"Model Summary: Number of parameters: {num_params}")
-            for name, param in self.model.named_parameters():
-                print(f"{name}: {param.numel()} parameters")
+        if hasattr(self, 'net'):
+            num_params = sum(p.numel() for p in self.net.parameters())
+            message = f"Model Summary: Number of parameters: {num_params}\n"
+            for name, param in self.net.named_parameters():
+                message += f"{name}: {param.numel()} parameters\n"
+            logger.debug(message)
                 
 
 class StateManager:
