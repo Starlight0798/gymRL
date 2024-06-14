@@ -46,9 +46,7 @@ class ReplayBuffer_on_policy:
             actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
                 rewards.view(-1, 1), dones.view(-1, 1), dw.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
             
-            logger.debug('Compute advantage and value target.')
             adv, v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
-            
             self.samples = states, actions, log_probs, adv, v_target
         
         return self.samples
