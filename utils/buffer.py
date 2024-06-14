@@ -7,14 +7,14 @@ class ReplayBuffer_on_policy:
     def __init__(self, cfg):
         self.cfg = cfg
         self.buffer = []
-        self.adv, self.v_target = None, None
+        self.samples = None
         
     def store(self, transitions):
+        assert self.samples is None, 'Need to clear the buffer before storing new transitions.'
         self.buffer.append(transitions)
         
     def clear(self):
         self.buffer = []
-        self.adv, self.v_target = None, None
         
     def size(self):
         return len(self.buffer)
@@ -36,19 +36,21 @@ class ReplayBuffer_on_policy:
         return adv, v_target
         
     def sample(self):
-        states, actions, rewards, dones, dw, log_probs, values, next_values = map(
-            lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.cfg.device), 
-            zip(*self.buffer)
-        )
-        
-        actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
-            rewards.view(-1, 1), dones.view(-1, 1), dw.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
-        
-        if self.adv is None or self.v_target is None:
+        if self.samples is None:
+            states, actions, rewards, dones, dw, log_probs, values, next_values = map(
+                lambda x: torch.tensor(np.array(x), dtype=torch.float32, device=self.cfg.device), 
+                zip(*self.buffer)
+            )
+            
+            actions, rewards, dones, dw, log_probs, values, next_values = actions.view(-1, 1).type(torch.long), \
+                rewards.view(-1, 1), dones.view(-1, 1), dw.view(-1, 1), log_probs.view(-1, 1), values.view(-1, 1), next_values.view(-1, 1)
+            
             logger.debug('Compute advantage and value target.')
-            self.adv, self.v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
+            adv, v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
+            
+        self.samples = states, actions, log_probs, adv, v_target
         
-        return states, actions, log_probs, self.adv, self.v_target
+        return self.samples
 
 
 class ReplayBuffer_on_policy_v2:
