@@ -125,8 +125,8 @@ class Config(BasicConfig):
 ## 更新
 
 - 加入torch.jit.script使用，jit优化能显著提升推理速度
-- 使用混合精度，显著优化降低显存使用
+- 使用混合精度可优化降低显存使用
 - 使用CosineAnnealingLR调整学习率
 - 网络可使用RNN(LSTM or GRU)，需继承*BaseRNNModel*
-- 使用PReLU替代ReLU，减少”神经元死亡“现象
+- 使用PReLU替代ReLU，可减少”神经元死亡“现象
 
