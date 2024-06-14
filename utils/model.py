@@ -6,7 +6,7 @@ import os
 from utils.buffer import Queue
 from loguru import logger
 
-def initialize_weights(layer, init_type='orthogonal', nonlinearity='relu'):
+def initialize_weights(layer, init_type='kaiming', nonlinearity='leaky_relu'):
     if isinstance(layer, (nn.Linear, nn.Conv2d)):
         if init_type == 'kaiming':                  # kaiming初始化，适合激活函数为ReLU, LeakyReLU, PReLU
             nn.init.kaiming_uniform_(layer.weight, nonlinearity=nonlinearity)
@@ -26,7 +26,7 @@ def initialize_weights(layer, init_type='orthogonal', nonlinearity='relu'):
 class MLP(nn.Module):
     def __init__(self,
                  dim_list,
-                 activation=nn.ReLU(),
+                 activation=nn.PReLU(),
                  last_act=False,
                  use_norm=False,
                  linear=nn.Linear,
@@ -128,7 +128,7 @@ class ConvBlock(nn.Module):
                  stride=1,
                  padding=2,
                  use_depthwise=True,
-                 activation=nn.ReLU()
+                 activation=nn.PReLU()
                  ):
         super(ConvBlock, self).__init__()
         self.conv_layers = nn.Sequential()
