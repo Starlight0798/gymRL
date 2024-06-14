@@ -88,10 +88,4 @@ class DQN(ModelLoader):
 
 
 if __name__ == '__main__':
-    cfg = Config()
-    env = make_env(cfg)
-    agent = DQN(cfg)
-    train(env, agent, cfg)
-    cfg.render_mode = 'human'
-    env = make_env(cfg)
-    test(env, agent, cfg)
+    BenchMark.train(DQN, Config)

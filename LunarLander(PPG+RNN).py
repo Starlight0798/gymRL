@@ -6,7 +6,6 @@ from torch.distributions import Categorical
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
-from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
@@ -58,7 +57,7 @@ class PPG(ModelLoader):
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // cfg.batch_size, eta_min=cfg.lr_end)
         self.memory = [ReplayBuffer(cfg) for _ in range(cfg.batch_size)]
         self.learn_step = 0
-        self.scaler = GradScaler()
+        
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -82,53 +81,49 @@ class PPG(ModelLoader):
         for _ in range(self.cfg.epochs):
             for index in np.random.permutation(self.cfg.batch_size):
                 states, actions, old_probs, adv, v_target = self.memory[index].sample()
-                with autocast():
-                    self.net.reset_hidden()
-                    actor_prob, value, _ = self.net(states)
-                    log_probs = torch.log(actor_prob.gather(1, actions))
-                    ratio = torch.exp(log_probs - old_probs)
-                    surr1 = ratio * adv
-                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
+                self.net.reset_hidden()
+                actor_prob, value, _ = self.net(states)
+                log_probs = torch.log(actor_prob.gather(1, actions))
+                ratio = torch.exp(log_probs - old_probs)
+                surr1 = ratio * adv
+                surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
 
-                    min_surr = torch.min(surr1, surr2)
-                    clip_loss = -torch.mean(torch.where(
-                        adv < 0,
-                        torch.max(min_surr, self.cfg.dual_clip * adv),
-                        min_surr
-                    ))
-                    value_loss = F.mse_loss(v_target, value)
-                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
-                    loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
+                min_surr = torch.min(surr1, surr2)
+                clip_loss = -torch.mean(torch.where(
+                    adv < 0,
+                    torch.max(min_surr, self.cfg.dual_clip * adv),
+                    min_surr
+                ))
+                value_loss = F.mse_loss(v_target, value)
+                entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
-                    losses[0] += loss.item()
-                    losses[1] += clip_loss.item()
-                    losses[2] += value_loss.item()
-                    losses[3] += entropy_loss.item()
-                    losses[4] += adv.mean().item()
+                losses[0] += loss.item()
+                losses[1] += clip_loss.item()
+                losses[2] += value_loss.item()
+                losses[3] += entropy_loss.item()
+                losses[4] += adv.mean().item()
 
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
+                loss.backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                self.optimizer.step()
 
         for _ in range(self.cfg.aux_epochs):
             for index in np.random.permutation(self.cfg.batch_size):
                 states, actions, old_probs, adv, v_target = self.memory[index].sample()
-                with autocast():
-                    self.net.reset_hidden()
-                    _, _, aux_value = self.net(states)
-                    aux_value_loss = F.mse_loss(v_target, aux_value)
-                    clone_loss = F.kl_div(old_probs, torch.log(actions), reduction='batchmean')
-                    joint_loss = aux_value_loss + self.cfg.beta_clone * clone_loss
-                    
-                    losses[5] += aux_value_loss.item()
+                self.net.reset_hidden()
+                _, _, aux_value = self.net(states)
+                aux_value_loss = F.mse_loss(v_target, aux_value)
+                clone_loss = F.kl_div(old_probs, torch.log(actions), reduction='batchmean')
+                joint_loss = aux_value_loss + self.cfg.beta_clone * clone_loss
+                
+                losses[5] += aux_value_loss.item()
 
-                    self.optimizer.zero_grad()
-                    self.scaler.scale(joint_loss).backward()
-                    nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                self.optimizer.zero_grad()
+                joint_loss.backward()
+                nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
+                self.optimizer.step()
 
         self.scheduler.step()
         for i in range(self.cfg.batch_size):
@@ -146,13 +141,4 @@ class PPG(ModelLoader):
         }
 
 if __name__ == '__main__':
-    cfg = Config()
-    env = make_env(cfg)
-    agent = PPG(cfg)
-    train(env, agent, cfg)
-    
-    cfg = Config()
-    cfg.render_mode = 'human'
-    env = make_env(cfg)
-    agent = PPG(cfg)
-    test(env, agent, cfg)
+    BenchMark.train(PPG, Config)

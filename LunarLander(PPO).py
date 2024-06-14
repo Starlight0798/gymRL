@@ -7,7 +7,6 @@ from torch.utils.data import BatchSampler, SubsetRandomSampler
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
-from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
@@ -18,7 +17,7 @@ class Config(BasicConfig):
         self.algo_name = 'PPO'
         self.train_eps = 2000
         self.batch_size = 1024
-        self.mini_batch = 16
+        self.mini_batch = 64
         self.epochs = 10
         self.clip = 0.2
         self.gamma = 0.995
@@ -54,7 +53,7 @@ class PPO(ModelLoader):
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps, eta_min=cfg.lr_end)
         self.memory = ReplayBuffer(cfg)
         self.learn_step = 0
-        self.scaler = GradScaler()
+        
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -79,28 +78,26 @@ class PPO(ModelLoader):
 
         for _ in range(self.cfg.epochs):
             for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size())), self.cfg.mini_batch, drop_last=False):
-                with autocast():
-                    actor_prob, value = self.net(states[indices])
-                    log_probs = torch.log(actor_prob.gather(1, actions[indices]))
-                    ratio = torch.exp(log_probs - old_probs[indices])
-                    surr1 = ratio * adv[indices]
-                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv[indices]
+                actor_prob, value = self.net(states[indices])
+                log_probs = torch.log(actor_prob.gather(1, actions[indices]))
+                ratio = torch.exp(log_probs - old_probs[indices])
+                surr1 = ratio * adv[indices]
+                surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv[indices]
 
-                    min_surr = torch.min(surr1, surr2)
-                    clip_loss = -torch.mean(torch.where(
-                        adv[indices] < 0,
-                        torch.max(min_surr, self.cfg.dual_clip * adv[indices]),
-                        min_surr
-                    ))
-                    value_loss = F.mse_loss(v_target[indices], value)
-                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
-                    loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
+                min_surr = torch.min(surr1, surr2)
+                clip_loss = -torch.mean(torch.where(
+                    adv[indices] < 0,
+                    torch.max(min_surr, self.cfg.dual_clip * adv[indices]),
+                    min_surr
+                ))
+                value_loss = F.mse_loss(v_target[indices], value)
+                entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
+                loss.backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                self.optimizer.step()
 
                 losses[0] += loss.item()
                 losses[1] += clip_loss.item()
@@ -121,13 +118,4 @@ class PPO(ModelLoader):
         }
 
 if __name__ == '__main__':
-    cfg = Config()
-    env = make_env(cfg)
-    agent = PPO(cfg)
-    train(env, agent, cfg)
-    
-    cfg = Config()
-    cfg.render_mode = 'human'
-    env = make_env(cfg)
-    agent = PPO(cfg)
-    test(env, agent, cfg)
+    BenchMark.train(PPO, Config)

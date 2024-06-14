@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler, autocast
 
 class Config:
     def __init__(self):
@@ -105,7 +104,7 @@ class DDPG:
         self.actor_optim = optim.Adam(self.actor.parameters(), lr=cfg.lr_a)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=cfg.lr_c)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        self.scaler = GradScaler()
+        
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -121,23 +120,20 @@ class DDPG:
         states, actions, rewards, next_states, dones = self.memory.sample()
         actions, rewards, dones = actions.view(-1, 1), rewards.view(-1, 1), dones.view(-1, 1)
         
-        with autocast():
-            next_q_value = self.critic_target(next_states, self.actor_target(next_states))
-            target_q_value = rewards + (1 - dones) * self.cfg.gamma * next_q_value 
-            critic_loss = torch.mean(F.mse_loss(self.critic(states, actions), target_q_value))
+        next_q_value = self.critic_target(next_states, self.actor_target(next_states))
+        target_q_value = rewards + (1 - dones) * self.cfg.gamma * next_q_value 
+        critic_loss = torch.mean(F.mse_loss(self.critic(states, actions), target_q_value))
             
         self.critic_optim.zero_grad()
-        self.scaler.scale(critic_loss).backward()
-        self.scaler.step(self.critic_optim)
+        critic_loss.backward()
+        self.critic_optim.step()
 
-        with autocast():
-            actor_loss = -torch.mean(self.critic(states, self.actor(states)))
+        actor_loss = -torch.mean(self.critic(states, self.actor(states)))
             
         self.actor_optim.zero_grad()
-        self.scaler.scale(actor_loss).backward()
-        self.scaler.step(self.actor_optim)
+        actor_loss.backward()
+        self.actor_optim.step()
 
-        self.scaler.update()
         self.update_params()
 
         return actor_loss.item(), critic_loss.item()
