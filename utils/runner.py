@@ -38,7 +38,7 @@ class BasicConfig:
             if torch.cuda.is_available() else torch.device('cpu')
 
     def show(self):
-        print('-' * 30 + '参数列表' + '-' * 30)
+        print('-' * 30 + 'Parameters' + '-' * 30)
         for k, v in vars(self).items():
             print(k, '=', v)
         print('-' * 60)
@@ -64,8 +64,8 @@ def make_env(cfg, **kwargs):
     if cfg.unwrapped:
         env = env.unwrapped
         
-    logger.info(f'观测空间 = {env.observation_space}')
-    logger.info(f'动作空间 = {env.action_space}')
+    logger.info(f'Observation Space = {env.observation_space}')
+    logger.info(f'Action Space = {env.action_space}')
     
     cfg.state_shape = env.observation_space.shape
     cfg.n_states = int(env.observation_space.shape[0])
