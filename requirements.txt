@@ -1,8 +1,7 @@
 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
-swig
 gym
-loguru
+swig
 gymnasium
 gymnasium[atari]
 gymnasium[accept-rom-license]
@@ -11,3 +10,4 @@ flappy-bird-gymnasium
 torch
 numpy
 tensorboard
+loguru

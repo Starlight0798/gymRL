@@ -1,7 +1,7 @@
 from collections import deque
 import torch
 import numpy as np
-from loguru import logger
+from torch.cuda.amp import autocast
 
 class ReplayBuffer_on_policy:
     def __init__(self, cfg):
@@ -21,18 +21,19 @@ class ReplayBuffer_on_policy:
         return len(self.buffer)
     
     def compute_advantage(self, rewards, dones, dw, values, next_values):
-        with torch.no_grad():
-            td_error = rewards + self.cfg.gamma * next_values * (1 - dw) - values
-            td_error = td_error.cpu().detach().numpy()
-            dones = dones.cpu().detach().numpy()
-            adv, gae = [], 0.0
-            for delta, d in zip(td_error[::-1], dones[::-1]):
-                gae = self.cfg.gamma * self.cfg.lamda * gae * (1 - d) + delta
-                adv.append(gae)
-            adv.reverse()
-            adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
-            v_target = adv + values
-            adv = (adv - adv.mean()) / (adv.std() + 1e-5)
+        with autocast():
+            with torch.no_grad():
+                td_error = rewards + self.cfg.gamma * next_values * (1 - dw) - values
+                td_error = td_error.cpu().detach().numpy()
+                dones = dones.cpu().detach().numpy()
+                adv, gae = [], 0.0
+                for delta, d in zip(td_error[::-1], dones[::-1]):
+                    gae = self.cfg.gamma * self.cfg.lamda * gae * (1 - d) + delta
+                    adv.append(gae)
+                adv.reverse()
+                adv = torch.tensor(np.array(adv), device=self.cfg.device, dtype=torch.float32).view(-1, 1)
+                v_target = adv + values
+                adv = (adv - adv.mean()) / (adv.std() + 1e-5)
                 
         return adv, v_target
         

@@ -6,6 +6,7 @@ from torch.distributions import Categorical
 from utils.model import *
 from utils.buffer import ReplayBuffer_on_policy as ReplayBuffer
 from utils.runner import *
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
@@ -18,7 +19,7 @@ class Config(BasicConfig):
         self.batch_size = 4
         self.epochs = 10
         self.clip = 0.2
-        self.gamma = 0.99
+        self.gamma = 0.995
         self.dual_clip = 3.0
         self.val_coef = 0.5
         self.lr_start = 5e-4
@@ -53,7 +54,7 @@ class PPO(ModelLoader):
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps // cfg.batch_size, eta_min=cfg.lr_end)
         self.memory = [ReplayBuffer(cfg) for _ in range(cfg.batch_size)]
         self.learn_step = 0
-        
+        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -78,33 +79,35 @@ class PPO(ModelLoader):
         for _ in range(self.cfg.epochs):
             for index in np.random.permutation(self.cfg.batch_size):
                 states, actions, old_probs, adv, v_target = self.memory[index].sample()
-                self.net.reset_hidden()
-                actor_prob, value = self.net(states)
-                log_probs = torch.log(actor_prob.gather(1, actions))
-                ratio = torch.exp(log_probs - old_probs)
-                surr1 = ratio * adv
-                surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
+                with autocast():
+                    self.net.reset_hidden()
+                    actor_prob, value = self.net(states)
+                    log_probs = torch.log(actor_prob.gather(1, actions))
+                    ratio = torch.exp(log_probs - old_probs)
+                    surr1 = ratio * adv
+                    surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
 
-                min_surr = torch.min(surr1, surr2)
-                clip_loss = -torch.mean(torch.where(
-                    adv < 0,
-                    torch.max(min_surr, self.cfg.dual_clip * adv),
-                    min_surr
-                ))
-                value_loss = F.mse_loss(v_target, value)
-                entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
-                loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
+                    min_surr = torch.min(surr1, surr2)
+                    clip_loss = -torch.mean(torch.where(
+                        adv < 0,
+                        torch.max(min_surr, self.cfg.dual_clip * adv),
+                        min_surr
+                    ))
+                    value_loss = F.mse_loss(v_target, value)
+                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                    loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
-                losses[0] += loss.item()
-                losses[1] += clip_loss.item()
-                losses[2] += value_loss.item()
-                losses[3] += entropy_loss.item()
-                losses[4] += adv.mean().item()
+                    losses[0] += loss.item()
+                    losses[1] += clip_loss.item()
+                    losses[2] += value_loss.item()
+                    losses[3] += entropy_loss.item()
+                    losses[4] += adv.mean().item()
 
                 self.optimizer.zero_grad()
-                loss.backward()
+                self.scaler.scale(loss).backward()
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
         self.scheduler.step()
         for i in range(self.cfg.batch_size):
