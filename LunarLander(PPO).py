@@ -21,7 +21,7 @@ class Config(BasicConfig):
         self.mini_batch = 16
         self.epochs = 10
         self.clip = 0.2
-        self.gamma = 0.99
+        self.gamma = 0.995
         self.dual_clip = 3.0
         self.val_coef = 0.5
         self.lr_start = 5e-4
