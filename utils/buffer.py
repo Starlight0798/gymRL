@@ -15,6 +15,7 @@ class ReplayBuffer_on_policy:
         
     def clear(self):
         self.buffer = []
+        self.samples = None
         
     def size(self):
         return len(self.buffer)
@@ -48,7 +49,7 @@ class ReplayBuffer_on_policy:
             logger.debug('Compute advantage and value target.')
             adv, v_target = self.compute_advantage(rewards, dones, dw, values, next_values)
             
-        self.samples = states, actions, log_probs, adv, v_target
+            self.samples = states, actions, log_probs, adv, v_target
         
         return self.samples
 
