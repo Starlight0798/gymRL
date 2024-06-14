@@ -1,7 +1,8 @@
 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
-gym
 swig
+gym
+loguru
 gymnasium
 gymnasium[atari]
 gymnasium[accept-rom-license]
