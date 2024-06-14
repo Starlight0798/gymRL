@@ -32,11 +32,14 @@ class Config(BasicConfig):
 
 class ActorCritic(BaseRNNModel):
     def __init__(self, cfg):
-        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=256)
-        self.fc_head = PSCN(cfg.n_states, 1024)
-        self.rnn = MLPRNN(1024, 1024, batch_first=True)
-        self.actor_fc = MLP([1024, 128, cfg.n_actions])
-        self.critic_fc = MLP([1024, 256, 64, 1])
+        super(ActorCritic, self).__init__(device=cfg.device, hidden_size=128)
+        self.fc_head = nn.Sequential(
+            MLP([cfg.n_states, 256, 512], last_act=True),
+            PSCN(512, 512)
+        )
+        self.rnn = MLPRNN(512, 512, batch_first=True)
+        self.actor_fc = MLP([512, 128, cfg.n_actions])
+        self.critic_fc = MLP([512, 128, 32, 1])
 
     def forward(self, s):
         x = self.fc_head(s)
