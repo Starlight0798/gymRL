@@ -34,42 +34,6 @@ TD3是对DDPG的改进，通过延迟更新策略网络和目标网络来减少Q
 
 我在离散动作空间的代码探索主要在PPO和PPO+RNN代码进行，读者可以重点关注。
 
-以下是一个我认为用来提取特征**效率很高**的网络层：
-
-```python
-class PSCN(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(PSCN, self).__init__()
-        assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8 "
-        self.hidden_dim = output_dim
-        self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True)
-        self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True)
-        self.fc3 = MLP([self.hidden_dim // 4, self.hidden_dim // 4], last_act=True)
-        self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True)
-
-    def forward(self, x):
-        x = self.fc1(x)
-
-        x1 = x[:, :self.hidden_dim // 2]
-        x = x[:, self.hidden_dim // 2:]
-        x = self.fc2(x)
-
-        x2 = x[:, :self.hidden_dim // 4]
-        x = x[:, self.hidden_dim // 4:]
-        x = self.fc3(x)
-
-        x3 = x[:, :self.hidden_dim // 8]
-        x = x[:, self.hidden_dim // 8:]
-        x4 = self.fc4(x)
-
-        out = torch.cat([x1, x2, x3, x4], dim=1)
-        return out
-    
-# MLP层即封装的全连接层，具体实现请参照utils/model.py
-```
-
-个人在这个层的实践过程中效果颇好，读者可以斟酌使用。
-
 ### Tensorboard-SummaryWriter使用
 
 我在**其中一些代码**(PPO, RDQN)加入了tensorboard的使用来获取训练和评估指标，使用方法：
