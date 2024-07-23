@@ -81,7 +81,8 @@ class PPO(ModelLoader):
             for indices in BatchSampler(SubsetRandomSampler(range(self.memory.size())), self.cfg.mini_batch, drop_last=False):
                 with autocast():
                     actor_prob, value = self.net(states[indices])
-                    log_probs = torch.log(actor_prob.gather(1, actions[indices]))
+                    dist = Categorical(actor_prob)
+                    log_probs = dist.log_prob(actions[indices])
                     ratio = torch.exp(log_probs - old_probs[indices])
                     surr1 = ratio * adv[indices]
                     surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv[indices]
@@ -93,7 +94,7 @@ class PPO(ModelLoader):
                         min_surr
                     ))
                     value_loss = F.mse_loss(v_target[indices], value)
-                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                    entropy_loss = -dist.entropy().mean()
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
                 self.optimizer.zero_grad()
@@ -115,7 +116,7 @@ class PPO(ModelLoader):
             'total_loss': losses[0] / self.cfg.epochs,
             'clip_loss': losses[1] / self.cfg.epochs,
             'value_loss': losses[2] / self.cfg.epochs,
-            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // cfg.mini_batch),
+            'entropy_loss': losses[3] / self.cfg.epochs / (self.cfg.batch_size // self.cfg.mini_batch),
             'advantage': adv.mean().item(),
             'lr': self.optimizer.param_groups[0]['lr'],
         }

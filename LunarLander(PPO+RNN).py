@@ -82,7 +82,8 @@ class PPO(ModelLoader):
                 with autocast():
                     self.net.reset_hidden()
                     actor_prob, value = self.net(states)
-                    log_probs = torch.log(actor_prob.gather(1, actions))
+                    dist = Categorical(actor_prob)
+                    log_probs = dist.log_prob(actions)
                     ratio = torch.exp(log_probs - old_probs)
                     surr1 = ratio * adv
                     surr2 = torch.clamp(ratio, 1 - self.cfg.clip, 1 + self.cfg.clip) * adv
@@ -94,7 +95,7 @@ class PPO(ModelLoader):
                         min_surr
                     ))
                     value_loss = F.mse_loss(v_target, value)
-                    entropy_loss = -torch.mean(-torch.sum(actor_prob * torch.log(actor_prob), dim=1))
+                    entropy_loss = -dist.entropy().mean()
                     loss = clip_loss + self.cfg.val_coef * value_loss + self.cfg.ent_coef * entropy_loss
 
                     losses[0] += loss.item()
