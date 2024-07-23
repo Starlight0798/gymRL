@@ -102,6 +102,9 @@ class NoisyLinear(nn.Module):
         epsilon_j = self.scale_noise(self.out_features)
         self.weight_epsilon.copy_(torch.ger(epsilon_j, epsilon_i))
         self.bias_epsilon.copy_(epsilon_j)
+        
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.in_features}, {self.out_features})"
 
 
 # 深度可分离卷积层，参数更少，效率比Conv2d更高
@@ -126,7 +129,7 @@ class ConvBlock(nn.Module):
                  input_shape=(3, 84, 84),
                  kernel_size=3,
                  stride=1,
-                 padding=2,
+                 padding=1,
                  use_depthwise=True,
                  activation=nn.PReLU()
                  ):
@@ -274,19 +277,24 @@ class PSCN(nn.Module):
             out = out.view(_shape[0], _shape[1], -1)
         return out
 
-# 将MLP和RNN以3:1的比例融合
-class MLPRNN(nn.Module):
-    def __init__(self, input_dim, output_dim, rnn=nn.GRU, *args, **kwargs):
-        super(MLPRNN, self).__init__()
-        assert output_dim % 4 == 0, "output_dim must be divisible by 4"
-        self.rnn_size = output_dim // 4
-        self.rnn_linear = MLP([input_dim, 3 * self.rnn_size])
-        self.rnn = rnn(input_dim, self.rnn_size, *args, **kwargs)
 
-    def forward(self, x, rnn_state: torch.Tensor):
+# 将MLP和RNN以ratio的比例融合
+class MLPRNN(nn.Module):
+    def __init__(self, input_dim, output_dim, ratio=3, batch_first=True, *args, **kwargs):
+        super(MLPRNN, self).__init__()
+        self.ratio = ratio
+        assert output_dim % (ratio + 1) == 0, f"output_dim must be divisible by {ratio+1}"
+        self.rnn_size = output_dim // (ratio + 1)
+        self.rnn_linear = MLP([input_dim, ratio * self.rnn_size])
+        self.rnn = nn.GRU(input_dim, self.rnn_size, batch_first=batch_first, *args, **kwargs)
+
+    def forward(self, x, rnn_state):
         rnn_linear_out = self.rnn_linear(x)
-        rnn_out, rnn_state = self.rnn(x, rnn_state)
-        out = torch.cat([rnn_linear_out, rnn_out], dim=-1)
+        batch = x.size(0)
+        rnn_input = x.reshape(1, batch, (self.ratio + 1) * self.rnn_size)
+        rnn_out, rnn_state = self.rnn(rnn_input, rnn_state)
+        rnn_out = rnn_out.reshape(batch, -1)
+        out = torch.cat([rnn_linear_out, rnn_out], dim=1)
         return out, rnn_state
     
 
@@ -300,7 +308,7 @@ class BaseRNNModel(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, self.hidden_size, device=self.device, dtype=torch.float)
+        self.rnn_h = torch.zeros(1, 1, self.hidden_size, device=self.device, dtype=torch.float)
         
     @torch.jit.export
     def get_hidden(self):
