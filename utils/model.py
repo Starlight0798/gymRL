@@ -74,7 +74,7 @@ class NoisyLinear(nn.Module):
     def forward(self, x):
         if self.training:
             self.reset_noise()
-            weight = self.weight_mu + self.weight_sigma.mul(self.weight_epsilon)  # mul是对应元素相乘
+            weight = self.weight_mu + self.weight_sigma.mul(self.weight_epsilon)  
             bias = self.bias_mu + self.bias_sigma.mul(self.bias_epsilon)
 
         else:
@@ -89,13 +89,13 @@ class NoisyLinear(nn.Module):
         self.bias_mu.data.uniform_(-mu_range, mu_range)
 
         self.weight_sigma.data.fill_(self.sigma_init / np.sqrt(self.in_features))
-        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_features))  # 这里要除以out_features
-
-    @staticmethod
-    def scale_noise(size):
-        x = torch.randn(size)  # torch.randn产生标准高斯分布
+        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_features))  
+        
+    def scale_noise(self, size: int):
+        x = torch.randn(size)  
         x = x.sign().mul(x.abs().sqrt())
         return x
+    
 
     def reset_noise(self):
         epsilon_i = self.scale_noise(self.in_features)
@@ -103,14 +103,15 @@ class NoisyLinear(nn.Module):
         self.weight_epsilon.copy_(torch.ger(epsilon_j, epsilon_i))
         self.bias_epsilon.copy_(epsilon_j)
         
+
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.in_features}, {self.out_features})"
+        return f"{self.__class__.__name__}(in_features={self.in_features}, out_features={self.out_features}, sigma_init={self.sigma_init})"
 
 
 # 深度可分离卷积层，参数更少，效率比Conv2d更高
-class DepthwiseSeparableConv(nn.Module):
+class DSConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=2):
-        super(DepthwiseSeparableConv, self).__init__()
+        super(DSConv, self).__init__()
         self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels)
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
         self.apply(initialize_weights)
@@ -294,6 +295,7 @@ class MLPRNN(nn.Module):
         return out, rnn_state
     
 
+
 # 循环神经网络基类，覆盖基本方法
 class BaseRNNModel(nn.Module):
     def __init__(self, device, hidden_size):
@@ -313,56 +315,8 @@ class BaseRNNModel(nn.Module):
     @torch.jit.export
     def set_hidden(self, hidden):
         self.rnn_h = hidden
-    
-
-# convmixer使用的层
-class ConvMixerLayer(nn.Module):
-    def __init__(self, dim, kernel_size = 9):
-        super().__init__()
-        self.Resnet = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size = kernel_size, groups = dim, padding = 'same'),
-            nn.GELU(),
-            nn.BatchNorm2d(dim)
-        )
-        self.Conv_1x1 = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size = 1),
-            nn.GELU(),
-            nn.BatchNorm2d(dim)
-        )
-
-    def forward(self, x):
-        x = x + self.Resnet(x)
-        x = self.Conv_1x1(x)
-        return x
 
 
-# 残差卷积网络块
-class ConvMixer(nn.Module):
-    def __init__(self, dim, depth, kernel_size = 9, patch_size = 7, output = 512):
-        super().__init__()
-        self.conv2d1 = nn.Sequential(
-            nn.Conv2d(3, dim, kernel_size = patch_size, stride = patch_size),
-            nn.GELU(),
-            nn.BatchNorm2d(dim)
-        )
-        self.ConvMixer_blocks = nn.ModuleList([])
-
-        for _ in range(depth):
-            self.ConvMixer_blocks.append(ConvMixerLayer(dim = dim, kernel_size = kernel_size))
-
-        self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(dim, output)
-        )
-        self.apply(initialize_weights)
-
-    def forward(self, x):
-        x = self.conv2d1(x)
-        for ConvMixer_block in self.ConvMixer_blocks:
-            x = ConvMixer_block(x)
-        x = self.head(x)
-        return x
 
 
 # 管理模型加载与存储
