@@ -110,7 +110,7 @@ class NoisyLinear(nn.Module):
 
 # 深度可分离卷积层，参数更少，效率比Conv2d更高
 class DSConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=2):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0):
         super(DSConv, self).__init__()
         self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels)
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
@@ -120,59 +120,69 @@ class DSConv(nn.Module):
         x = self.depthwise(x)
         x = self.pointwise(x)
         return x
+    
+    
+# 带噪声的卷积层
+class NoisyConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, groups=1, sigma_init=0.5):
+        super(NoisyConv2d, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.sigma_init = sigma_init
+        self.groups = groups
 
+        self.weight_mu = nn.Parameter(torch.FloatTensor(out_channels, in_channels // groups, kernel_size, kernel_size))
+        self.weight_sigma = nn.Parameter(torch.FloatTensor(out_channels, in_channels // groups, kernel_size, kernel_size))
+        self.register_buffer('weight_epsilon', torch.FloatTensor(out_channels, in_channels // groups, kernel_size, kernel_size))
 
-# 卷积网络块
-class ConvBlock(nn.Module):
-    def __init__(self,
-                 channels: list[tuple],
-                 output_dim,
-                 input_shape=(3, 84, 84),
-                 kernel_size=3,
-                 stride=1,
-                 padding=1,
-                 use_depthwise=True,
-                 activation=nn.PReLU()
-                 ):
-        super(ConvBlock, self).__init__()
-        self.conv_layers = nn.Sequential()
-        for i, (in_channels, out_channels) in enumerate(channels):
-            if use_depthwise:
-                self.conv_layers.add_module(f'conv_dw_{i}', DepthwiseSeparableConv(in_channels,
-                                                                                   out_channels,
-                                                                                   kernel_size,
-                                                                                   stride,
-                                                                                   padding))
-            else:
-                self.conv_layers.add_module(f'conv_{i}', nn.Conv2d(in_channels,
-                                                                   out_channels,
-                                                                   kernel_size,
-                                                                   stride,
-                                                                   padding))
-            self.conv_layers.add_module(f'bn_{i}', nn.BatchNorm2d(out_channels))
-            self.conv_layers.add_module(f'act_{i}', activation)
-            self.conv_layers.add_module(f'pool_{i}', nn.MaxPool2d(kernel_size=(2, 2)))
-            
-        self.output_dim = output_dim
-        self._initialize_fc(input_shape, channels)
+        self.bias_mu = nn.Parameter(torch.FloatTensor(out_channels))
+        self.bias_sigma = nn.Parameter(torch.FloatTensor(out_channels))
+        self.register_buffer('bias_epsilon', torch.FloatTensor(out_channels))
 
-    def _initialize_fc(self, input_shape, channels):
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, *input_shape)
-            x = dummy_input
-            for layer in self.conv_layers:
-                x = layer(x)
-            assert len(x.shape) == 4
-            n_features = x.size(1) * x.size(2) * x.size(3)
-            self.fc = MLP([n_features, self.output_dim])
-            logger.info(f'ConvBlock output dim: {n_features}')
+        self.reset_parameters()
+        self.reset_noise()
 
 
     def forward(self, x):
-        features = self.conv_layers(x)
-        flat = torch.flatten(features, 1) 
-        out = self.fc(flat)
-        return out
+        if self.training:
+            self.reset_noise()
+            weight = self.weight_mu + self.weight_sigma.mul(self.weight_epsilon)
+            bias = self.bias_mu + self.bias_sigma.mul(self.bias_epsilon)
+        else:
+            weight = self.weight_mu
+            bias = self.bias_mu
+
+        return F.conv2d(x, weight, bias, stride=self.stride, padding=self.padding, groups=self.groups)
+
+
+    def reset_parameters(self):
+        mu_range = 1 / np.sqrt(self.in_channels * self.kernel_size * self.kernel_size)
+        self.weight_mu.data.uniform_(-mu_range, mu_range)
+        self.bias_mu.data.uniform_(-mu_range, mu_range)
+
+        self.weight_sigma.data.fill_(self.sigma_init / np.sqrt(self.in_channels * self.kernel_size * self.kernel_size))
+        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_channels))
+
+
+    def scale_noise(self, size):
+        x = torch.randn(size)
+        x = x.sign().mul(x.abs().sqrt())
+        return x
+
+
+    def reset_noise(self):
+        epsilon_weight = self.scale_noise((self.out_channels, self.in_channels // self.groups, self.kernel_size, self.kernel_size))
+        epsilon_bias = self.scale_noise(self.out_channels)
+        self.weight_epsilon.copy_(epsilon_weight)
+        self.bias_epsilon.copy_(epsilon_bias)
+
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(in_channels={self.in_channels}, out_channels={self.out_channels}, kernel_size={self.kernel_size}, stride={self.stride}, padding={self.padding}, groups={self.groups}, sigma_init={self.sigma_init})"
+
     
 
 # 位置编码
@@ -244,14 +254,14 @@ class MultiHeadAttention(nn.Module):
 
 # 一种兼顾宽度和深度的全连接层，提取信息效率更高
 class PSCN(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, linear=nn.Linear):
         super(PSCN, self).__init__()
         assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8"
         self.hidden_dim = output_dim
-        self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True)
-        self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True)
-        self.fc3 = MLP([self.hidden_dim // 4, self.hidden_dim // 4], last_act=True)
-        self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True)
+        self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True, linear=linear)
+        self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True, linear=linear)
+        self.fc3 = MLP([self.hidden_dim // 4, self.hidden_dim // 4], last_act=True, linear=linear)
+        self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True, linear=linear)
 
     def forward(self, x):
         _shape = x.shape
