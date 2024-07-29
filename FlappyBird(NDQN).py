@@ -19,18 +19,21 @@ class Config(BasicConfig):
         self.gamma = 0.9
         self.lr = 1e-4
         self.batch_size = 256
-        self.memory_capacity = 40960
+        self.memory_capacity = 51200
         self.target_update = 400
-        self.grad_clip = 0.5
+        self.grad_clip = 1.0
         self.load_model = False
 
 
 class DQNnet(nn.Module):
     def __init__(self, cfg):
         super(DQNnet, self).__init__()
-        self.head = MLP([cfg.n_states, 512, 512, 512], linear=NoisyLinear, last_act=True)
-        self.fc_a = MLP([512, 128, cfg.n_actions], linear=NoisyLinear)
-        self.fc_v = MLP([512, 128, 1], linear=NoisyLinear)
+        self.head = nn.Sequential(
+            PSCN(cfg.n_states, 512, linear=NoisyLinear),
+            MLP([512, 256, 256], linear=NoisyLinear, last_act=True)
+        )
+        self.fc_a = MLP([256, 64, cfg.n_actions], linear=NoisyLinear)
+        self.fc_v = MLP([256, 64, 1], linear=NoisyLinear)
         
     def forward(self, obs):
         out = self.head(obs)
@@ -38,11 +41,6 @@ class DQNnet(nn.Module):
         A = self.fc_a(out)
         logits = V + (A - A.mean(dim=-1, keepdim=True))
         return logits
-
-    def reset_noise(self):
-        for layer in self.modules():
-            if isinstance(layer, NoisyLinear):
-                layer.reset_noise()
                 
 
 class DQN(ModelLoader):
@@ -58,18 +56,24 @@ class DQN(ModelLoader):
         self.learn_step = 0
         for param in self.target_net.parameters():
             param.requires_grad = False
+        self.net.train()
+        self.target_net.train()
 
 
     @torch.no_grad()
     def choose_action(self, state):
-        state = torch.tensor(state, device=self.cfg.device, dtype=torch.float32)
+        state = torch.tensor(state, device=self.cfg.device, dtype=torch.float32).view(1, -1)
         action = self.net(state).argmax(dim=-1).item()
         return action
 
 
     @torch.no_grad()
     def evaluate(self, state):
-        return self.choose_action(state)
+        self.net.eval()
+        state = torch.tensor(state, device=self.cfg.device, dtype=torch.float32).view(1, -1)
+        action = self.net(state).argmax(dim=-1).item()
+        self.net.train()
+        return action
 
 
     def update(self):
@@ -96,9 +100,6 @@ class DQN(ModelLoader):
         
         if self.learn_step % self.cfg.target_update == 0:
             self.target_net.load_state_dict(self.net.state_dict())
-            
-        self.net.reset_noise()
-        self.target_net.reset_noise()
 
         return {
             'loss': loss.item(),
