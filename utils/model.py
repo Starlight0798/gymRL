@@ -264,28 +264,18 @@ class PSCN(nn.Module):
         self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True, linear=linear)
 
     def forward(self, x):
-        _shape = x.shape
-        if len(_shape) > 2:
-            x = x.view(-1, _shape[-1])
-        
         x = self.fc1(x)
 
-        x1 = x[:, :self.hidden_dim // 2]
-        x = x[:, self.hidden_dim // 2:]
+        x1, x = torch.split(x, [self.hidden_dim // 2, self.hidden_dim // 2], dim=-1)
         x = self.fc2(x)
 
-        x2 = x[:, :self.hidden_dim // 4]
-        x = x[:, self.hidden_dim // 4:]
+        x2, x = torch.split(x, [self.hidden_dim // 4, self.hidden_dim // 4], dim=-1)
         x = self.fc3(x)
 
-        x3 = x[:, :self.hidden_dim // 8]
-        x = x[:, self.hidden_dim // 8:]
+        x3, x = torch.split(x, [self.hidden_dim // 8, self.hidden_dim // 8], dim=-1)
         x4 = self.fc4(x)
 
-        out = torch.cat([x1, x2, x3, x4], dim=1)
-        
-        if len(_shape) > 2:
-            out = out.view(_shape[0], _shape[1], -1)
+        out = torch.cat([x1, x2, x3, x4], dim=-1)
         return out
 
 
