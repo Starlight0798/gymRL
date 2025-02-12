@@ -62,11 +62,11 @@ class NoisyLinear(nn.Module):
 
         self.weight_mu = nn.Parameter(torch.FloatTensor(out_features, in_features))
         self.weight_sigma = nn.Parameter(torch.FloatTensor(out_features, in_features))
-        self.register_buffer('weight_epsilon', torch.FloatTensor(out_features, in_features))
+        self.register_buffer('weight_epsilon', torch.FloatTensor(out_features, in_features), persistent=False)
 
         self.bias_mu = nn.Parameter(torch.FloatTensor(out_features))
         self.bias_sigma = nn.Parameter(torch.FloatTensor(out_features))
-        self.register_buffer('bias_epsilon', torch.FloatTensor(out_features))
+        self.register_buffer('bias_epsilon', torch.FloatTensor(out_features), persistent=False)
 
         self.reset_parameters()
         self.reset_noise()
@@ -254,28 +254,35 @@ class MultiHeadAttention(nn.Module):
 
 # 一种兼顾宽度和深度的全连接层，提取信息效率更高
 class PSCN(nn.Module):
-    def __init__(self, input_dim, output_dim, linear=nn.Linear):
+    def __init__(self, input_dim, output_dim, depth=4, linear=nn.Linear):
         super(PSCN, self).__init__()
-        assert output_dim >= 32 and output_dim % 8 == 0, "output_dim must be >= 32 and divisible by 8"
-        self.hidden_dim = output_dim
-        self.fc1 = MLP([input_dim, self.hidden_dim], last_act=True, linear=linear)
-        self.fc2 = MLP([self.hidden_dim // 2, self.hidden_dim // 2], last_act=True, linear=linear)
-        self.fc3 = MLP([self.hidden_dim // 4, self.hidden_dim // 4], last_act=True, linear=linear)
-        self.fc4 = MLP([self.hidden_dim // 8, self.hidden_dim // 8], last_act=True, linear=linear)
+        min_dim = 2 ** (depth - 1)
+        assert depth >= 1, "depth must be at least 1"
+        assert output_dim >= min_dim, f"output_dim must be >= {min_dim} for depth {depth}"
+        assert output_dim % min_dim == 0, f"output_dim must be divisible by {min_dim} for depth {depth}"
+        
+        self.layers = nn.ModuleList()
+        self.output_dim = output_dim
+        in_dim, out_dim = input_dim, output_dim
+        
+        for i in range(depth):
+            self.layers.append(MLP([in_dim, out_dim], last_act=True, linear=linear))
+            in_dim = out_dim // 2
+            out_dim //= 2 
 
     def forward(self, x):
-        x = self.fc1(x)
+        out_parts = []
+        
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            if i < len(self.layers) - 1:
+                split_size = int(self.output_dim // (2 ** (i + 1)))
+                part, x = torch.split(x, [split_size, split_size], dim=-1)
+                out_parts.append(part)
+            else:
+                out_parts.append(x)
 
-        x1, x = torch.split(x, [self.hidden_dim // 2, self.hidden_dim // 2], dim=-1)
-        x = self.fc2(x)
-
-        x2, x = torch.split(x, [self.hidden_dim // 4, self.hidden_dim // 4], dim=-1)
-        x = self.fc3(x)
-
-        x3, x = torch.split(x, [self.hidden_dim // 8, self.hidden_dim // 8], dim=-1)
-        x4 = self.fc4(x)
-
-        out = torch.cat([x1, x2, x3, x4], dim=-1)
+        out = torch.cat(out_parts, dim=-1)
         return out
 
 
@@ -306,7 +313,7 @@ class BaseRNNModel(nn.Module):
 
     @torch.jit.export
     def reset_hidden(self):
-        self.rnn_h = torch.zeros(1, 1, self.hidden_size, device=self.device, dtype=torch.float)
+        self.rnn_h = torch.zeros(1, self.hidden_size, device=self.device, dtype=torch.float)
         
     @torch.jit.export
     def get_hidden(self):
