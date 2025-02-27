@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 class Config:
     def __init__(self):
         # 环境参数
-        self.env_name = "CartPole-v1"  
+        self.env_name = "LunarLander-v2"  
         self.seed = None
         
         # 训练参数
@@ -29,9 +29,7 @@ class Config:
         self.entropy_coef = 0.015       # 熵奖励系数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
-        self.val_coef = 0.5             # 价值损失系数
         self.dual_clip = 3.0            # 双重clip
-        self.target_kl = 0.03           # 早停KL阈值
         self.anneal = True              # 是否退火
 
 # 初始化权重
@@ -119,13 +117,13 @@ class ActorCritic(nn.Module):
         # 共享网络层
         self.shared = PSCN(
             input_dim=state_dim, 
-            output_dim=64,
-            depth=2,
+            output_dim=256,
+            depth=4,
         )
         # 策略头
-        self.actor = MLP([64, 64, action_dim])
+        self.actor = MLP([256, 256, action_dim])
         # 价值头
-        self.critic = MLP([64, 64, 1])
+        self.critic = MLP([256, 256, 1])
             
     def forward(self, x):
         x = self.shared(x)
@@ -137,8 +135,7 @@ class ActorCritic(nn.Module):
         dist = Categorical(logits=logits)
         action = dist.sample()
         log_prob = dist.log_prob(action)
-        entropy = dist.entropy()
-        return action.item(), log_prob.item(), value.squeeze(), entropy.item()
+        return action.item(), log_prob.item(), value.squeeze()
     
     def get_value(self, x):
         """获取状态价值"""
@@ -153,8 +150,7 @@ class RolloutBuffer:
         self.log_probs = []
         self.values = []
         self.rewards = []
-        self.dones = []
-        self.entropies = []  
+        self.dones = [] 
         self.next_value = None
         
     def clear(self):
@@ -165,7 +161,6 @@ class RolloutBuffer:
         self.values.clear()
         self.rewards.clear()
         self.dones.clear()
-        self.entropies.clear()
         self.next_value = None
 
 # PPO训练器
@@ -196,7 +191,7 @@ class PPOTrainer:
         for _ in range(self.cfg.update_freq):
             state_tensor = torch.FloatTensor(state)
             with torch.no_grad():
-                action, log_prob, value, entropy = self.model.get_action(state_tensor)
+                action, log_prob, value = self.model.get_action(state_tensor)
                 
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
@@ -208,7 +203,6 @@ class PPOTrainer:
             self.buffer.values.append(value)
             self.buffer.rewards.append(reward)
             self.buffer.dones.append(done)
-            self.buffer.entropies.append(entropy)
             
             state = next_state
             episode_reward += reward
@@ -260,11 +254,7 @@ class PPOTrainer:
         approx_kls = []
         clip_fracs = []
         
-        early_stop = False
         for epoch in range(self.cfg.num_epochs):
-            if early_stop:
-                break
-                
             for batch in loader:
                 s_batch, a_batch, old_lp_batch, old_v_batch, adv_batch, ret_batch = batch
                 
@@ -298,7 +288,7 @@ class PPOTrainer:
                 )
                 v_loss1 = (values.squeeze() - ret_batch).pow(2)
                 v_loss2 = (values_clipped - ret_batch).pow(2)
-                value_loss = self.cfg.val_coef * torch.max(v_loss1, v_loss2).mean()
+                value_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
                 
                 # 熵正则项
                 entropy_loss = -self.ent_coef * entropy
@@ -322,10 +312,6 @@ class PPOTrainer:
                 with torch.no_grad():
                     approx_kl = (old_lp_batch - new_log_probs).mean().item()
                     approx_kls.append(approx_kl)
-            
-            # KL早停检查
-            if np.mean(approx_kls) > self.cfg.target_kl:
-                early_stop = True
         
         # 学习率退火 
         if self.cfg.anneal:
