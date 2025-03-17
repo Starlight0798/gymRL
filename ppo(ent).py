@@ -1,13 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn import functional as F
 from torch.distributions import Categorical
 import numpy as np
 import random
 import gymnasium as gym
 from collections import deque
-import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -15,7 +13,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 class Config:
     def __init__(self):
         # 环境参数
-        self.env_name = "LunarLander-v2"  
+        self.env_name = "LunarLander-v2"
         self.seed = None
         
         # 训练参数
@@ -25,11 +23,14 @@ class Config:
         self.batch_size = 512           # 每次更新的批次大小
         self.gamma = 0.99               # 折扣因子
         self.gae_lambda = 0.95          # GAE参数
-        self.clip_eps = 0.2             # PPO-CLIP参数
-        self.entropy_coef = 0.015       # 熵奖励系数
+        self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数
+        self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
+        self.dual_clip = 3.0            # 双重裁剪
+        self.clip_value = 0.5           # PPO-CLIP-VALUE参数
+        self.entropy_coef = 0.01        # 熵奖励系数
         self.lr = 3e-4                  # 学习率
-        self.max_grad_norm = 0.5        # 梯度裁剪阈值
-        self.dual_clip = 3.0            # 双重clip
+        self.weight_decay = 1e-2        # 权重衰减
+        self.max_grad_norm = 1.0        # 梯度裁剪阈值
         self.anneal = True              # 是否退火
 
 # 初始化权重
@@ -173,7 +174,11 @@ class PPOTrainer:
         
         # 初始化模型和优化器
         self.model = ActorCritic(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr, eps=1e-5)
+        self.optimizer = optim.AdamW(
+            self.model.parameters(), 
+            lr=self.cfg.lr, 
+            weight_decay=self.cfg.weight_decay
+        )
         
         # 训练状态跟踪
         self.step_count = 0
@@ -187,6 +192,7 @@ class PPOTrainer:
         seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
         state, _ = self.env.reset(seed=seed)
         episode_reward = 0
+        episode_steps = 0
         
         for _ in range(self.cfg.update_freq):
             state_tensor = torch.FloatTensor(state)
@@ -206,12 +212,14 @@ class PPOTrainer:
             
             state = next_state
             episode_reward += reward
+            episode_steps += 1
             self.step_count += 1
             
             if done:
                 self.episode_rewards.append(episode_reward)
                 state, _ = self.env.reset()
                 episode_reward = 0
+                episode_steps = 0
                 
         # 获取最后一步的状态价值
         with torch.no_grad():
@@ -268,23 +276,23 @@ class PPOTrainer:
                 ratio = (new_log_probs - old_lp_batch).exp()
                 
                 # 统计被clip的比例
-                clipped = (ratio < (1 - self.cfg.clip_eps)) | (ratio > (1 + self.cfg.clip_eps))
+                clipped = (ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))
                 clip_frac = clipped.float().mean().item()
                 
                 # 优势归一化
                 adv_batch = (adv_batch - adv_batch.mean()) / (adv_batch.std() + 1e-8)
                 
-                # 策略损失计算
-                clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)      
+                # 策略损失计算  
+                clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)
                 surr1 = clip_ratio * adv_batch
-                surr2 = torch.clamp(ratio, 1 - self.cfg.clip_eps, 1 + self.cfg.clip_eps) * adv_batch
+                surr2 = torch.clamp(ratio, 1 - self.cfg.clip_eps_min, 1 + self.cfg.clip_eps_max) * adv_batch
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # 值函数损失计算
                 values_clipped = old_v_batch + torch.clamp(
                     values.squeeze() - old_v_batch, 
-                    -self.cfg.clip_eps, 
-                    self.cfg.clip_eps
+                    -self.cfg.clip_value, 
+                    self.cfg.clip_value
                 )
                 v_loss1 = (values.squeeze() - ret_batch).pow(2)
                 v_loss2 = (values_clipped - ret_batch).pow(2)
