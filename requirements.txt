@@ -3,6 +3,7 @@
 gym
 swig
 gymnasium==0.29
+gymnasium[box2d]
 ale-py
 flappy-bird-gymnasium
 torch
