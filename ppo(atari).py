@@ -8,6 +8,7 @@ import gymnasium as gym
 from collections import deque
 import warnings
 import ale_py
+from gymnasium.wrappers import AtariPreprocessing
 warnings.filterwarnings('ignore', category=UserWarning)
 gym.register_envs(ale_py)
 
@@ -15,12 +16,11 @@ gym.register_envs(ale_py)
 class Config:
     def __init__(self):
         # 环境参数
-        self.env_name = "Breakout-ramDeterministic-v4"
+        self.env_name = "MsPacmanNoFrameskip-v4"
         self.seed = None
         
         # 训练参数
         self.max_train_steps = 1e7      # 最大训练步数
-        self.max_eps_steps = 2048       # 最大回合步数
         self.update_freq = 2048         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 512           # 每次更新的批次大小
@@ -116,20 +116,30 @@ class PSCN(nn.Module):
 
 # 演员-评论家网络
 class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, action_dim):
         super().__init__()
         # 共享网络层
-        self.shared = PSCN(
-            input_dim=state_dim, 
-            output_dim=256,
-            depth=4,
+        self.shared = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=8, stride=4),
+            nn.PReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.PReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.PReLU(),
+            nn.Flatten(),
+            PSCN(
+                input_dim=64 * 7 * 7, 
+                output_dim=512,
+                depth=5,
+            )
         )
         # 策略头
-        self.actor = MLP([256, 256, action_dim])
+        self.actor = MLP([512, 512, action_dim])
         # 价值头
-        self.critic = MLP([256, 256, 1])
+        self.critic = MLP([512, 512, 1])
             
     def forward(self, x):
+        x = x.permute(0, 3, 1, 2)
         x = self.shared(x)
         return self.actor(x), self.critic(x)
     
@@ -171,12 +181,16 @@ class RolloutBuffer:
 class PPOTrainer:
     def __init__(self, config):
         self.cfg = config
-        self.env = gym.make(config.env_name).unwrapped
-        state_dim = self.env.observation_space.shape[0]
+        self.env = AtariPreprocessing(
+            gym.make(config.env_name),
+            terminal_on_life_loss=True,
+            scale_obs=True,
+            grayscale_obs=False
+        )
         action_dim = self.env.action_space.n
         
         # 初始化模型和优化器
-        self.model = ActorCritic(state_dim, action_dim)
+        self.model = ActorCritic(action_dim)
         self.optimizer = optim.AdamW(
             self.model.parameters(), 
             lr=self.cfg.lr, 
@@ -195,10 +209,9 @@ class PPOTrainer:
         seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
         state, _ = self.env.reset(seed=seed)
         episode_reward = 0
-        episode_steps = 0
         
         for _ in range(self.cfg.update_freq):
-            state_tensor = torch.FloatTensor(state)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
             with torch.no_grad():
                 action, log_prob, value = self.model.get_action(state_tensor)
                 
@@ -215,18 +228,16 @@ class PPOTrainer:
             
             state = next_state
             episode_reward += reward
-            episode_steps += 1
             self.step_count += 1
             
-            if done or episode_steps >= self.cfg.max_eps_steps:
+            if done:
                 self.episode_rewards.append(episode_reward)
                 state, _ = self.env.reset()
                 episode_reward = 0
-                episode_steps = 0
                 
         # 获取最后一步的状态价值
         with torch.no_grad():
-            self.buffer.next_value = self.model.get_value(torch.FloatTensor(state)).item()
+            self.buffer.next_value = self.model.get_value(torch.FloatTensor(state).unsqueeze(0)).item()
             
     def compute_advantages(self):
         """计算GAE优势估计"""
@@ -362,15 +373,13 @@ class PPOTrainer:
             seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
             state, _ = self.env.reset(seed=seed)
             episode_reward = 0
-            episode_steps = 0
             done = False
-            while not done and episode_steps < self.cfg.max_eps_steps:
+            while not done:
                 with torch.no_grad():
                     action, _, _, _ = self.model.get_action(torch.FloatTensor(state))
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
-                episode_steps += 1
             total_rewards.append(episode_reward)
         print(f"Test Results: Mean Reward {np.mean(total_rewards):.2f} ± {np.std(total_rewards):.2f}")
         self.model.train()

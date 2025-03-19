@@ -18,7 +18,6 @@ class Config:
         
         # 训练参数
         self.max_train_steps = 2e6      # 最大训练步数
-        self.max_eps_steps = 1024       # 最大回合步数
         self.update_freq = 2048         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 512           # 每次更新的批次大小
@@ -193,10 +192,9 @@ class PPOTrainer:
         seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
         state, _ = self.env.reset(seed=seed)
         episode_reward = 0
-        episode_steps = 0
         
         for _ in range(self.cfg.update_freq):
-            state_tensor = torch.FloatTensor(state)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
             with torch.no_grad():
                 action, log_prob, value = self.model.get_action(state_tensor)
                 
@@ -213,18 +211,16 @@ class PPOTrainer:
             
             state = next_state
             episode_reward += reward
-            episode_steps += 1
             self.step_count += 1
             
-            if done or episode_steps >= self.cfg.max_eps_steps:
+            if done:
                 self.episode_rewards.append(episode_reward)
                 state, _ = self.env.reset()
                 episode_reward = 0
-                episode_steps = 0
                 
         # 获取最后一步的状态价值
         with torch.no_grad():
-            self.buffer.next_value = self.model.get_value(torch.FloatTensor(state)).item()
+            self.buffer.next_value = self.model.get_value(torch.FloatTensor(state).unsqueeze(0)).item()
             
     def compute_advantages(self):
         """计算GAE优势估计"""
@@ -360,15 +356,13 @@ class PPOTrainer:
             seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
             state, _ = self.env.reset(seed=seed)
             episode_reward = 0
-            episode_steps = 0
             done = False
-            while not done and episode_steps < self.cfg.max_eps_steps:
+            while not done:
                 with torch.no_grad():
                     action, _, _, _ = self.model.get_action(torch.FloatTensor(state))
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
-                episode_steps += 1
             total_rewards.append(episode_reward)
         print(f"Test Results: Mean Reward {np.mean(total_rewards):.2f} ± {np.std(total_rewards):.2f}")
         self.model.train()
