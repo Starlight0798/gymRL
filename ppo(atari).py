@@ -7,18 +7,20 @@ import random
 import gymnasium as gym
 from collections import deque
 import warnings
+import ale_py
 warnings.filterwarnings('ignore', category=UserWarning)
+gym.register_envs(ale_py)
 
 # 配置类
 class Config:
     def __init__(self):
         # 环境参数
-        self.env_name = "LunarLander-v2"
+        self.env_name = "Breakout-ramDeterministic-v4"
         self.seed = None
         
         # 训练参数
-        self.max_train_steps = 2e6      # 最大训练步数
-        self.max_eps_steps = 1024       # 最大回合步数
+        self.max_train_steps = 1e7      # 最大训练步数
+        self.max_eps_steps = 2048       # 最大回合步数
         self.update_freq = 2048         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 512           # 每次更新的批次大小

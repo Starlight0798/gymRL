@@ -2,10 +2,8 @@
 
 gym
 swig
-gymnasium
-gymnasium[atari]
-gymnasium[accept-rom-license]
-gymnasium[box2d]
+gymnasium==0.29
+ale-py
 flappy-bird-gymnasium
 torch
 numpy
