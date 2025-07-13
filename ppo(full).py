@@ -7,20 +7,18 @@ import random
 import gymnasium as gym
 from collections import deque
 import warnings
-import ale_py
-from gymnasium.wrappers import AtariPreprocessing
+from typing import List, Type, Optional
 warnings.filterwarnings('ignore', category=UserWarning)
-gym.register_envs(ale_py)
 
 # 配置类
 class Config:
     def __init__(self):
         # 环境参数
-        self.env_name = "MsPacmanNoFrameskip-v4"
+        self.env_name = "LunarLander-v2"
         self.seed = None
         
         # 训练参数
-        self.max_train_steps = 1e7      # 最大训练步数
+        self.max_train_steps = 2e6      # 最大训练步数
         self.update_freq = 2048         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 512           # 每次更新的批次大小
@@ -29,61 +27,84 @@ class Config:
         self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
-        self.clip_value = 0.5           # PPO-CLIP-VALUE参数
         self.entropy_coef = 0.01        # 熵奖励系数
         self.lr = 3e-4                  # 学习率
-        self.weight_decay = 1e-2        # 权重衰减
-        self.max_grad_norm = 1.0        # 梯度裁剪阈值
+        self.max_grad_norm = 0.5        # 梯度裁剪阈值
         self.anneal = True              # 是否退火
 
-# 初始化权重
-def initialize_weights(layer, init_type='kaiming', nonlinearity='leaky_relu'):
-    if isinstance(layer, (nn.Linear, nn.Conv2d)):
-        if init_type == 'kaiming':                  
-            nn.init.kaiming_uniform_(layer.weight, nonlinearity=nonlinearity)
-        elif init_type == 'xavier':
-            nn.init.xavier_uniform_(layer.weight)   
-        elif init_type == 'orthogonal':
-            nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))       
-        else:       
-            raise ValueError(f"Unknown initialization type: {init_type}")
-        
+def layer_init(layer, std: float):
+    if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear):
+        nn.init.orthogonal_(layer.weight, gain=std)
         if layer.bias is not None:
             nn.init.constant_(layer.bias, 0)
     return layer
 
-# 全连接层
+
+def make_fc_layer(
+    in_features: int,
+    out_features: int,
+    use_bias: bool = True,
+    std: float = np.sqrt(2),
+):
+    layer = nn.Linear(in_features, out_features, bias=use_bias)
+    return layer_init(layer, std=std)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def _norm(self, x: torch.Tensor):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x: torch.Tensor):
+        output = self._norm(x.float()).type_as(x)
+        return output * self.weight
+
+
 class MLP(nn.Module):
-    def __init__(self,
-                 dim_list,
-                 activation=nn.PReLU(),
-                 last_act=False,
-                 use_norm=False,
-                 linear=nn.Linear,
-                 *args, **kwargs
-                 ):
+    def __init__(
+        self,
+        dim_list: List[int],
+        activation: Type[nn.Module] = nn.SiLU,
+        last_act: bool = False,
+        last_std: Optional[float] = None,
+        norm: Optional[Type[nn.Module]] = RMSNorm,
+    ):
         super(MLP, self).__init__()
         assert dim_list, "Dim list can't be empty!"
         layers = []
         for i in range(len(dim_list) - 1):
-            layer = initialize_weights(linear(dim_list[i], dim_list[i + 1], *args, **kwargs))
+            if last_std and i == len(dim_list) - 2:
+                layer = make_fc_layer(dim_list[i], dim_list[i + 1], std=last_std)
+            else:
+                layer = make_fc_layer(dim_list[i], dim_list[i + 1])
             layers.append(layer)
             if i < len(dim_list) - 2:
-                if use_norm:
-                    layers.append(nn.LayerNorm(dim_list[i + 1]))
-                layers.append(activation)
+                layers.append(activation(inplace=True))
+                if norm:
+                    layers.append(norm(dim_list[i + 1]))
+
         if last_act:
-            if use_norm:
-                layers.append(nn.LayerNorm(dim_list[-1]))
-            layers.append(activation)
+            layers.append(activation(inplace=True))
+            if norm:
+                layers.append(norm(dim_list[-1]))
+
         self.mlp = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.mlp(x)      
-    
-# 一种兼顾宽度和深度的全连接层
+        return self.mlp(x)
+
+
 class PSCN(nn.Module):
-    def __init__(self, input_dim, output_dim, depth=4, linear=nn.Linear):
+    def __init__(
+        self, 
+        input_dim: int, 
+        output_dim: int, 
+        depth: int, 
+    ):
         super(PSCN, self).__init__()
         min_dim = 2 ** (depth - 1)
         assert depth >= 1, "depth must be at least 1"
@@ -94,18 +115,18 @@ class PSCN(nn.Module):
         self.output_dim = output_dim
         in_dim, out_dim = input_dim, output_dim
         
-        for i in range(depth):
-            self.layers.append(MLP([in_dim, out_dim], last_act=True, linear=linear))
+        for _ in range(depth):
+            self.layers.append(MLP([in_dim, out_dim], last_act=True))
             in_dim = out_dim // 2
             out_dim //= 2 
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         out_parts = []
         
         for i, layer in enumerate(self.layers):
             x = layer(x)
             if i < len(self.layers) - 1:
-                split_size = int(self.output_dim // (2 ** (i + 1)))
+                split_size = self.output_dim // (2 ** (i + 1))
                 part, x = torch.split(x, [split_size, split_size], dim=-1)
                 out_parts.append(part)
             else:
@@ -116,30 +137,20 @@ class PSCN(nn.Module):
 
 # 演员-评论家网络
 class ActorCritic(nn.Module):
-    def __init__(self, action_dim):
+    def __init__(self, state_dim, action_dim):
         super().__init__()
         # 共享网络层
-        self.shared = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4),
-            nn.PReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.PReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.PReLU(),
-            nn.Flatten(),
-            PSCN(
-                input_dim=64 * 7 * 7, 
-                output_dim=512,
-                depth=5,
-            )
+        self.shared = PSCN(
+            input_dim=state_dim, 
+            output_dim=256,
+            depth=3,
         )
         # 策略头
-        self.actor = MLP([512, 512, action_dim])
+        self.actor = MLP([256, 256, action_dim])
         # 价值头
-        self.critic = MLP([512, 512, 1])
+        self.critic = MLP([256, 256, 1])
             
     def forward(self, x):
-        x = x.permute(0, 3, 1, 2)
         x = self.shared(x)
         return self.actor(x), self.critic(x)
     
@@ -181,20 +192,16 @@ class RolloutBuffer:
 class PPOTrainer:
     def __init__(self, config):
         self.cfg = config
-        self.env = AtariPreprocessing(
-            gym.make(config.env_name),
-            terminal_on_life_loss=True,
-            scale_obs=True,
-            grayscale_obs=False
-        )
+        self.env = gym.make(config.env_name).unwrapped
+        state_dim = self.env.observation_space.shape[0]
         action_dim = self.env.action_space.n
         
         # 初始化模型和优化器
-        self.model = ActorCritic(action_dim)
-        self.optimizer = optim.AdamW(
+        self.model = ActorCritic(state_dim, action_dim)
+        self.optimizer = optim.Adam(
             self.model.parameters(), 
             lr=self.cfg.lr, 
-            weight_decay=self.cfg.weight_decay
+            eps=1e-5
         )
         
         # 训练状态跟踪
@@ -260,11 +267,10 @@ class PPOTrainer:
         states = torch.FloatTensor(np.array(self.buffer.states))
         actions = torch.LongTensor(self.buffer.actions)
         old_log_probs = torch.FloatTensor(self.buffer.log_probs)
-        old_values = torch.FloatTensor(self.buffer.values)
         
         # 创建数据加载器
         dataset = torch.utils.data.TensorDataset(
-            states, actions, old_log_probs, old_values, 
+            states, actions, old_log_probs, 
             torch.FloatTensor(advantages), torch.FloatTensor(returns)
         )
         loader = torch.utils.data.DataLoader(dataset, batch_size=self.cfg.batch_size, shuffle=True)
@@ -278,7 +284,7 @@ class PPOTrainer:
         
         for _ in range(self.cfg.num_epochs):
             for batch in loader:
-                s_batch, a_batch, old_lp_batch, old_v_batch, adv_batch, ret_batch = batch
+                s_batch, a_batch, old_lp_batch, adv_batch, ret_batch = batch
                 
                 # 计算新策略的输出
                 logits, values = self.model(s_batch)
@@ -293,9 +299,6 @@ class PPOTrainer:
                 clipped = (ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))
                 clip_frac = clipped.float().mean().item()
                 
-                # 优势归一化
-                adv_batch = (adv_batch - adv_batch.mean()) / (adv_batch.std() + 1e-8)
-                
                 # 策略损失计算  
                 clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)
                 surr1 = clip_ratio * adv_batch
@@ -303,14 +306,7 @@ class PPOTrainer:
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # 值函数损失计算
-                values_clipped = old_v_batch + torch.clamp(
-                    values.squeeze() - old_v_batch, 
-                    -self.cfg.clip_value, 
-                    self.cfg.clip_value
-                )
-                v_loss1 = (values.squeeze() - ret_batch).pow(2)
-                v_loss2 = (values_clipped - ret_batch).pow(2)
-                value_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
+                value_loss = 0.5 * (values.squeeze() - ret_batch).pow(2).mean()
                 
                 # 熵正则项
                 entropy_loss = -self.ent_coef * entropy
