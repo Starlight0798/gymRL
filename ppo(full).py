@@ -7,6 +7,8 @@ import random
 import gymnasium as gym
 from collections import deque
 import warnings
+import signal
+import sys
 from typing import List, Type, Optional
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -146,9 +148,9 @@ class ActorCritic(nn.Module):
             depth=3,
         )
         # 策略头
-        self.actor = MLP([256, 256, action_dim])
+        self.actor = MLP([256, 256, action_dim], last_std=0.001)
         # 价值头
-        self.critic = MLP([256, 256, 1])
+        self.critic = MLP([256, 256, 1], last_std=1.0)
             
     def forward(self, x):
         x = self.shared(x)
@@ -192,7 +194,7 @@ class RolloutBuffer:
 class PPOTrainer:
     def __init__(self, config):
         self.cfg = config
-        self.env = gym.make(config.env_name).unwrapped
+        self.env = gym.make(config.env_name)
         state_dim = self.env.observation_space.shape[0]
         action_dim = self.env.action_space.n
         
@@ -361,7 +363,7 @@ class PPOTrainer:
                 mean_reward = np.mean(self.episode_rewards)
                 print(f"Step: {self.step_count}, Avg Reward: {mean_reward:.2f}")
 
-    def test(self, num_episodes=10):
+    def eval(self, num_episodes=10):
         """评估模型性能"""
         self.model.eval()
         total_rewards = []
@@ -372,17 +374,52 @@ class PPOTrainer:
             done = False
             while not done:
                 with torch.no_grad():
-                    action, _, _, _ = self.model.get_action(torch.FloatTensor(state))
+                    action, _, _ = self.model.get_action(torch.FloatTensor(state))
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
             total_rewards.append(episode_reward)
         print(f"Test Results: Mean Reward {np.mean(total_rewards):.2f} ± {np.std(total_rewards):.2f}")
         self.model.train()
+        
+    def test(self):
+        """测试模型性能, 可视化渲染"""
+        self.eval(num_episodes=10)
+        self.model.eval()
+        seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
+        env = gym.make(self.cfg.env_name, render_mode='human')
+        state, _ = env.reset(seed=seed)
+        env.render()
+        done = False
+        total_reward = 0
+        
+        while not done:
+            env.render()
+            with torch.no_grad():
+                action, _, _ = self.model.get_action(torch.FloatTensor(state).unsqueeze(0))
+            state, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            total_reward += reward
+            
+        print(f"Total Reward: {total_reward:.2f}")
+        env.close()
+        self.model.train()
 
-# 主程序
 if __name__ == "__main__":
     config = Config()
     ppo = PPOTrainer(config)
-    ppo.train()
-    ppo.test()
+
+    def signal_handler(signum, frame):
+        print("\n检测到 Ctrl+C，停止训练并开始测试...")
+        ppo.test()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        ppo.train()
+    except KeyboardInterrupt:
+        print("\n训练被中断，开始测试...")
+        ppo.test()
+    else:
+        ppo.test()
