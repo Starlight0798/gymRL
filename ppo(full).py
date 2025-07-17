@@ -20,7 +20,7 @@ class Config:
         self.seed = None
         
         # 训练参数
-        self.max_train_steps = 2e6      # 最大训练步数
+        self.max_train_steps = 3e6      # 最大训练步数
         self.update_freq = 2048         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 512           # 每次更新的批次大小
@@ -36,7 +36,7 @@ class Config:
         self.entropy_coef = 0.01        # 熵奖励系数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
-        self.anneal = True              # 是否退火
+        self.anneal = False             # 是否退火
         self.device = 'cpu'
 
 def layer_init(layer, std: float):
