@@ -27,16 +27,16 @@ class Config:
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
         self.lam_critic = 0.97          # GAE参数 - critic
-        self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数
+        self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数 
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
-        self.clip_cov_ratio = 0.03      # PPO-COV-RATIO参数
+        self.clip_cov_ratio = 0.06      # PPO-COV-RATIO参数
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
         self.entropy_coef = 0.01        # 熵奖励系数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
-        self.anneal = False             # 是否退火
+        self.anneal = True              # 是否退火
         self.device = 'cpu'
 
 def layer_init(layer, std: float):
@@ -150,7 +150,7 @@ class ActorCritic(nn.Module):
         self.shared = PSCN(
             input_dim=state_dim, 
             output_dim=256,
-            depth=3,
+            depth=4,
         )
         # 策略头
         self.actor = MLP([256, 256, action_dim], last_std=0.001)
@@ -228,7 +228,7 @@ class PPOTrainer:
         episode_reward = 0
         
         for _ in range(self.cfg.update_freq):
-            state_tensor = torch.tensor(state).unsqueeze(0).to(self.cfg.device)
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device)
             with torch.no_grad():
                 action, log_prob, value = self.model.get_action(state_tensor)
                 
@@ -254,7 +254,7 @@ class PPOTrainer:
                 
         # 获取最后一步的状态价值
         with torch.no_grad():
-            self.buffer.next_value = self.model.get_value(torch.tensor(state).unsqueeze(0).to(self.cfg.device)).item()
+            self.buffer.next_value = self.model.get_value(torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device)).item()
 
     def compute_advantages(self):
         """计算GAE优势估计"""
@@ -277,11 +277,11 @@ class PPOTrainer:
 
     def update_model(self, advantages, returns):
         """执行PPO参数更新"""
-        states = torch.tensor(self.buffer.states).to(self.cfg.device)
-        actions = torch.tensor(self.buffer.actions).to(self.cfg.device).long()
-        old_log_probs = torch.tensor(self.buffer.log_probs).to(self.cfg.device)
-        advantages = torch.tensor(advantages).to(self.cfg.device)
-        returns = torch.tensor(returns).to(self.cfg.device)
+        states = torch.tensor(self.buffer.states, dtype=torch.float32).to(self.cfg.device)
+        actions = torch.tensor(self.buffer.actions, dtype=torch.float32).to(self.cfg.device).long()
+        old_log_probs = torch.tensor(self.buffer.log_probs, dtype=torch.float32).to(self.cfg.device)
+        advantages = torch.tensor(advantages, dtype=torch.float32).to(self.cfg.device)
+        returns = torch.tensor(returns, dtype=torch.float32).to(self.cfg.device)
 
         # 创建数据加载器
         dataset = torch.utils.data.TensorDataset(states, actions, old_log_probs, advantages, returns)
@@ -303,30 +303,30 @@ class PPOTrainer:
                 logits, values = self.model(s_batch)
                 dist = Categorical(logits=logits)
                 new_log_probs = dist.log_prob(a_batch)
-                entropy = dist.entropy().mean()
                 
                 # 重要性采样比率
                 ratio = (new_log_probs - old_lp_batch).exp()
-                clip_frac = ((ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))).float().mean().item()
                 covs = (new_log_probs - new_log_probs.mean()) * (adv_batch - adv_batch.mean())
+                corr = torch.ones_like(adv_batch)
                 
                 # 策略损失计算  
                 clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)
                 surr1 = clip_ratio * adv_batch
                 surr2 = torch.clamp(ratio, 1 - self.cfg.clip_eps_min, 1 + self.cfg.clip_eps_max) * adv_batch
-                clip_num = max(int(len(ratio) * self.cfg.clip_cov_ratio), 1)
                 clip_idx = torch.where((covs > self.cfg.clip_cov_min) & (covs < self.cfg.clip_cov_max))[0]
-                if len(clip_idx) > 0:
+                if len(clip_idx) > 0 and self.cfg.clip_cov_ratio > 0:
+                    clip_num = max(int(len(clip_idx) * self.cfg.clip_cov_ratio), 1)
                     clip_idx = clip_idx[torch.randperm(len(clip_idx))[:min(clip_num, len(clip_idx))]]
-                surr1[clip_idx] = surr1[clip_idx].detach()
-                surr2[clip_idx] = surr2[clip_idx].detach()
-                policy_loss = -torch.min(surr1, surr2).mean()
+                    corr[clip_idx] = 0.0
+                clip_frac = torch.mean(((ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))).float() * corr)
+                policy_loss = torch.mean(-torch.min(surr1, surr2) * corr)
                 
                 # 值函数损失计算
-                value_loss = 0.5 * (values.squeeze() - ret_batch).pow(2).mean()
+                value_loss = torch.mean(0.5 * corr * (values.squeeze() - ret_batch).pow(2))
                 
                 # 熵正则项
-                entropy_loss = -self.ent_coef * entropy
+                entropy = (dist.entropy() * corr).mean()
+                entropy_loss = torch.mean(-self.ent_coef * entropy)
                 
                 # 总损失计算
                 loss = policy_loss + value_loss + entropy_loss
@@ -341,7 +341,7 @@ class PPOTrainer:
                 policy_losses.append(policy_loss.item())
                 value_losses.append(value_loss.item())
                 entropy_losses.append(entropy.item())
-                clip_fracs.append(clip_frac)
+                clip_fracs.append(clip_frac.item())
                 covs_list.append(covs.mean().item())
                 
                 # 计算近似KL散度
@@ -391,7 +391,7 @@ class PPOTrainer:
             done = False
             while not done:
                 with torch.no_grad():
-                    action, _, _ = self.model.get_action(torch.tensor(state).to(self.cfg.device), deterministic=True)
+                    action, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).to(self.cfg.device), deterministic=True)
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
@@ -413,7 +413,7 @@ class PPOTrainer:
         while not done:
             env.render()
             with torch.no_grad():
-                action, _, _ = self.model.get_action(torch.tensor(state).unsqueeze(0).to(self.cfg.device), deterministic=True)
+                action, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), deterministic=True)
             state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             total_reward += reward
