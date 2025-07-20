@@ -215,12 +215,12 @@ class BlockDiagonal(nn.Module):
         block_out_features = out_features // num_blocks
 
         self.blocks = nn.ModuleList([
-            nn.Linear(block_in_features, block_out_features).to("cpu") for _ in range(num_blocks)
+            nn.Linear(block_in_features, block_out_features) for _ in range(num_blocks)
         ])
 
     def forward(self, x):
         x = x.chunk(self.num_blocks, dim=-1)
-        x = [block(x_i.to("cpu")) for block, x_i in zip(self.blocks, x)]
+        x = [block(x_i) for block, x_i in zip(self.blocks, x)]
         x = torch.cat(x, dim=-1)
         return x
 
@@ -257,7 +257,7 @@ class sLSTMBlock(nn.Module):
 
     def forward(self, x, prev_state):
         assert x.size(-1) == self.input_size
-        h_prev, c_prev, n_prev, m_prev = (s.to("cpu") for s in prev_state)
+        h_prev, c_prev, n_prev, m_prev = prev_state
         x_norm = self.input_norm(x)
         x_conv = F.silu(self.causal_conv(x_norm.unsqueeze(1)).squeeze(1))
 
@@ -294,7 +294,7 @@ class sLSTM(nn.Module):
         self.num_layers = num_layers
         self.batch_first = batch_first
         self.proj_factor_slstm = proj_factor
-        self.layers = nn.ModuleList([sLSTMBlock(input_size, hidden_size, num_heads, proj_factor).to("cpu") for _ in range(num_layers)])
+        self.layers = nn.ModuleList([sLSTMBlock(input_size, hidden_size, num_heads, proj_factor) for _ in range(num_layers)])
 
     def forward(self, x, state=None):
         assert x.ndim == 3
@@ -302,7 +302,7 @@ class sLSTM(nn.Module):
         seq_len, batch_size, _ = x.size()
 
         if state is not None:
-            state = torch.stack(list(state)).to("cpu")
+            state = torch.stack(list(state)).to(x.device)
             assert state.ndim == 4
             num_hidden, state_num_layers, state_batch_size, state_input_size = state.size()
             assert num_hidden == 4
@@ -311,7 +311,7 @@ class sLSTM(nn.Module):
             assert state_input_size == self.input_size
             state = state.transpose(0, 1)
         else:
-            state = torch.zeros(self.num_layers, 4, batch_size, self.hidden_size,device="cpu")
+            state = torch.zeros(self.num_layers, 4, batch_size, self.hidden_size, device=x.device)
 
         output = []
         for t in range(seq_len):
