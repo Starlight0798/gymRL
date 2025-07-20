@@ -21,9 +21,9 @@ class Config:
         
         # 训练参数
         self.max_train_steps = 3e6      # 最大训练步数
-        self.update_freq = 2048         # 每次更新前收集的经验数
+        self.update_freq = 4096         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
-        self.batch_size = 512           # 每次更新的批次大小
+        self.batch_size = 1024          # 每次更新的批次大小
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
         self.lam_critic = 0.97          # GAE参数 - critic
@@ -213,7 +213,7 @@ class PPOTrainer:
         
         # 训练状态跟踪
         self.step_count = 0
-        self.episode_rewards = deque(maxlen=50)
+        self.episode_rewards = deque(maxlen=10)
         self.lr = self.cfg.lr
         self.ent_coef = self.cfg.entropy_coef
         

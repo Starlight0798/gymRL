@@ -10,6 +10,7 @@ import warnings
 import signal
 import sys
 from typing import List, Type, Optional, Tuple
+from xlstm import xLSTM
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -24,7 +25,8 @@ class Config:
         self.max_train_steps = 3e6      # 最大训练步数
         self.update_freq = 4096         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
-        self.batch_size = 1024          # 每次更新的批次大小
+        self.seq_len = 16               # RNN处理的序列长度
+        self.batch_size = 64            # 批次大小(序列的数量)
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
         self.lam_critic = 0.97          # GAE参数 - critic
@@ -47,7 +49,6 @@ def layer_init(layer, std: float):
             nn.init.constant_(layer.bias, 0)
     return layer
 
-
 def make_fc_layer(
     in_features: int,
     out_features: int,
@@ -56,7 +57,6 @@ def make_fc_layer(
 ):
     layer = nn.Linear(in_features, out_features, bias=use_bias)
     return layer_init(layer, std=std)
-
 
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -70,7 +70,6 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor):
         output = self._norm(x.float()).type_as(x)
         return output * self.weight
-
 
 class MLP(nn.Module):
     def __init__(
@@ -104,7 +103,6 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.mlp(x)
-
 
 class PSCN(nn.Module):
     def __init__(
@@ -142,34 +140,40 @@ class PSCN(nn.Module):
 
         out = torch.cat(out_parts, dim=-1)
         return out
-    
-    
+
 class URNN(nn.Module):
     def __init__(
         self, 
         input_size: int,
         hidden_size: int,
         layer: Type[nn.Module],
+        *args,
+        **kwargs
     ):
+        super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
-        super().__init__()
-        self.rnn = layer(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+        self.rnn = layer(input_size=input_size, hidden_size=hidden_size, batch_first=True, *args, **kwargs)
         if isinstance(self.rnn, nn.LSTM):
             self.chunk_size = 2
         elif isinstance(self.rnn, nn.GRU):
             self.chunk_size = 1
+        elif isinstance(self.rnn, xLSTM):
+            self.chunk_size = 4
         else:
             raise ValueError("Unsupported RNN layer type.")
         
     def forward(self, x: torch.Tensor, hidden_state: Optional[torch.Tensor]):
-        batch = x.size(0)
+        """
+        x: (batch_size, seq_len, input_size)
+        hidden_state: (batch_size, hidden_size * chunk_size)
+        """
+        batch_size = x.size(0)
         if hidden_state is None:
-            hidden_state = torch.zeros(1, batch, self.hidden_size * self.chunk_size, device=x.device)
-        assert len(hidden_state.shape) == 2, "hidden_state must be (batch, hidden_size * chunk_size), but got shape: {}".format(hidden_state.shape)
-        
-        hidden_state = hidden_state.unsqueeze(0)
-        x = x.unsqueeze(1)
+            hidden_state = torch.zeros(1, batch_size, self.hidden_size * self.chunk_size, device=x.device)
+        else:
+            # (batch, hidden_dim) -> (1, batch, hidden_dim)
+            hidden_state = hidden_state.unsqueeze(0)
         
         if self.chunk_size > 1:
             h_in = torch.chunk(hidden_state, self.chunk_size, dim=-1)
@@ -180,35 +184,52 @@ class URNN(nn.Module):
             rnn_out, h_out = self.rnn(x, h_in)
             new_hidden_state = h_out
         
-        rnn_out = rnn_out.squeeze(1)
+        # rnn_out: (batch, seq_len, hidden_size)
+        # new_hidden_state: (1, batch, hidden_dim) squeeze 成 (batch, hidden_dim)
         new_hidden_state = new_hidden_state.squeeze(0)
             
         return rnn_out, new_hidden_state
-        
 
 class ActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super().__init__()
         self.shared = PSCN(
             input_dim=state_dim, 
-            output_dim=256,
+            output_dim=256, 
             depth=4,
         )
         
         self.rnn = URNN(
             input_size=256, 
             hidden_size=256, 
-            layer=nn.GRU,
-        )
+            layer=nn.LSTM,
+        )   
         
         self.actor = MLP([256, 256, action_dim], last_std=0.001)
         self.critic = MLP([256, 256, 1], last_std=1.0)
             
     def forward(self, x, hidden_state):
+        """
+        可以处理单步或序列数据。
+        x: (batch, state_dim) 或 (batch, seq_len, state_dim)
+        hidden_state: (batch, hidden_dim)
+        """
+        # 检查输入是单步还是序列
+        is_sequence = x.dim() == 3
+        if not is_sequence:
+            # 如果是单步，增加一个时间维度，使其成为长度为1的序列
+            x = x.unsqueeze(1)
+
         x = self.shared(x)
         rnn_out, new_hidden_state = self.rnn(x, hidden_state)
         logits = self.actor(rnn_out)
         value = self.critic(rnn_out)
+
+        if not is_sequence:
+            # 如果输入是单步，则移除时间维度以保持输出格式一致
+            logits = logits.squeeze(1)
+            value = value.squeeze(1)
+        
         return logits, value, new_hidden_state
     
     def get_action(self, x, hidden_state, deterministic=False):
@@ -217,14 +238,14 @@ class ActorCritic(nn.Module):
         dist = Categorical(logits=logits)
         action = dist.sample() if not deterministic else logits.argmax(dim=-1)
         log_prob = dist.log_prob(action)
-        return action.cpu().item(), log_prob.cpu().item(), value.squeeze().cpu(), new_hidden_state
+        # 使用 .squeeze(-1) 更安全，避免当 batch_size=1 时维度被完全压缩
+        return action.cpu().item(), log_prob.cpu().item(), value.squeeze(-1).cpu().item(), new_hidden_state
     
     def get_value(self, x, hidden_state):
         """获取状态价值"""
         _, value, _ = self.forward(x, hidden_state)
-        return value.squeeze().cpu()
+        return value.squeeze(-1).cpu()
 
-# 经验回放缓存
 class RolloutBuffer:
     def __init__(self):
         self.states = []
@@ -237,7 +258,6 @@ class RolloutBuffer:
         self.next_value = None
         
     def clear(self):
-        """清空缓存"""
         self.states.clear()
         self.actions.clear()
         self.log_probs.clear()
@@ -247,47 +267,47 @@ class RolloutBuffer:
         self.hidden_states.clear()
         self.next_value = None
 
-# PPO训练器
 class PPOTrainer:
     def __init__(self, config):
         self.cfg = config
+        # 要求 update_freq 必须是 seq_len 的整数倍
+        assert self.cfg.update_freq % self.cfg.seq_len == 0, \
+            f"update_freq ({self.cfg.update_freq}) must be divisible by seq_len ({self.cfg.seq_len})"
+        # 批次大小现在是序列的数量，所以它必须能整除总序列数
+        self.num_sequences = self.cfg.update_freq // self.cfg.seq_len
+        assert self.num_sequences % self.cfg.batch_size == 0, \
+            f"num_sequences ({self.num_sequences}) must be divisible by batch_size ({self.cfg.batch_size})"
+
         self.env = gym.make(config.env_name)
         state_dim = self.env.observation_space.shape[0]
         action_dim = self.env.action_space.n
         
-        # 初始化模型和优化器
         self.model = ActorCritic(state_dim, action_dim).to(self.cfg.device)
-        self.optimizer = optim.Adam(
-            self.model.parameters(), 
-            lr=self.cfg.lr, 
-            eps=1e-5
-        )
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.cfg.lr, eps=1e-5)
         self.hidden_size = self.model.rnn.hidden_size * self.model.rnn.chunk_size
         print(f"Model hidden size: {self.hidden_size}")
         
-        # 训练状态跟踪
         self.step_count = 0
-        self.episode_rewards = deque(maxlen=50)
+        self.episode_rewards = deque(maxlen=10)
         self.lr = self.cfg.lr
         self.ent_coef = self.cfg.entropy_coef
         
-        # 打印模型设备
-        print(f"Model device: {next(self.model.parameters()).device}")
+        print(f"Using device: {self.cfg.device}")
+        print(f"Sequence length: {self.cfg.seq_len}")
 
     def collect_experience(self):
-        """收集训练经验数据"""
+        """收集经验数据 (逻辑基本不变)"""
         self.buffer = RolloutBuffer()
         seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
         state, _ = self.env.reset(seed=seed)
         episode_reward = 0
         
-        # 初始化隐藏状态
         hidden_state = torch.zeros(1, self.hidden_size, device=self.cfg.device)
         
         for _ in range(self.cfg.update_freq):
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device)
             
-            # 存储当前步的隐藏状态
+            # 存储当前步开始前的隐藏状态
             self.buffer.hidden_states.append(hidden_state.squeeze(0).cpu().numpy())
 
             with torch.no_grad():
@@ -296,16 +316,14 @@ class PPOTrainer:
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
             
-            # 存储经验数据
             self.buffer.states.append(state)
             self.buffer.actions.append(action)
             self.buffer.log_probs.append(log_prob)
-            self.buffer.values.append(value.item())
+            self.buffer.values.append(value)
             self.buffer.rewards.append(reward)
             self.buffer.dones.append(done)
             
             state = next_state
-            # 更新隐藏状态
             hidden_state = next_hidden_state 
             episode_reward += reward
             self.step_count += 1
@@ -314,10 +332,9 @@ class PPOTrainer:
                 self.episode_rewards.append(episode_reward)
                 state, _ = self.env.reset()
                 episode_reward = 0
-                # 重置隐藏状态
+                # 在 episode 结束时重置隐藏状态
                 hidden_state = torch.zeros(1, self.hidden_size, device=self.cfg.device)
                 
-        # 获取最后一步的状态价值
         with torch.no_grad():
             self.buffer.next_value = self.model.get_value(
                 torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device),
@@ -325,12 +342,11 @@ class PPOTrainer:
             ).item()
 
     def compute_advantages(self):
-        """计算GAE优势估计 (此函数无需修改)"""
+        """计算GAE优势估计"""
         rewards = np.array(self.buffer.rewards)
         dones = np.array(self.buffer.dones)
         values = np.array(self.buffer.values + [self.buffer.next_value])
         
-        # GAE计算
         adv_actor = np.zeros_like(rewards)
         adv_critic = np.zeros_like(rewards)
         last_gae_actor = 0
@@ -344,41 +360,74 @@ class PPOTrainer:
         return adv_actor, returns
 
     def update_model(self, advantages, returns):
-        """执行PPO参数更新"""
+        """
+        执行基于序列的PPO参数更新
+        """
+        # 1. 将所有经验数据转换为Tensor
         states = torch.tensor(np.array(self.buffer.states), dtype=torch.float32).to(self.cfg.device)
-        actions = torch.tensor(self.buffer.actions, dtype=torch.float32).to(self.cfg.device).long()
+        actions = torch.tensor(self.buffer.actions, dtype=torch.long).to(self.cfg.device)
         old_log_probs = torch.tensor(self.buffer.log_probs, dtype=torch.float32).to(self.cfg.device)
         advantages = torch.tensor(advantages, dtype=torch.float32).to(self.cfg.device)
         returns = torch.tensor(returns, dtype=torch.float32).to(self.cfg.device)
-        # 将存储的隐藏状态转换为Tensor
         hidden_states = torch.tensor(np.array(self.buffer.hidden_states), dtype=torch.float32).to(self.cfg.device)
 
-        # 创建数据加载器
-        dataset = torch.utils.data.TensorDataset(states, actions, old_log_probs, advantages, returns, hidden_states)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=self.cfg.batch_size, shuffle=True)
+        # 2. 将扁平数据重塑为序列
+        # (update_freq, dim) -> (num_sequences, seq_len, dim)
+        states = states.view(self.num_sequences, self.cfg.seq_len, -1)
+        actions = actions.view(self.num_sequences, self.cfg.seq_len)
+        old_log_probs = old_log_probs.view(self.num_sequences, self.cfg.seq_len)
+        advantages = advantages.view(self.num_sequences, self.cfg.seq_len)
+        returns = returns.view(self.num_sequences, self.cfg.seq_len)
         
-        # 训练指标跟踪
+        # 3. 提取每个序列的初始隐藏状态
+        # 我们只需要每个序列开始时的那个隐藏状态
+        initial_hidden_states = hidden_states[::self.cfg.seq_len]
+
         policy_losses, value_losses, entropy_losses = [], [], []
         approx_kls, clip_fracs, covs_list = [], [], []
         
         for _ in range(self.cfg.num_epochs):
-            for batch in loader:
-                s_batch, a_batch, old_lp_batch, adv_batch, ret_batch, hidden_batch = batch
+            # 4. 对序列进行混洗，而不是对单个时间步
+            perm = torch.randperm(self.num_sequences, device=self.cfg.device)
+            
+            for start in range(0, self.num_sequences, self.cfg.batch_size):
+                end = start + self.cfg.batch_size
+                idx = perm[start:end]
 
-                # 计算新策略的输出
+                # 5. 获取一个批次的序列数据
+                s_batch = states[idx]
+                a_batch = actions[idx]
+                old_lp_batch = old_log_probs[idx]
+                adv_batch = advantages[idx]
+                ret_batch = returns[idx]
+                hidden_batch = initial_hidden_states[idx]
+
+                # 6. 模型前向传播，一次处理整个序列
+                # s_batch: (batch_size, seq_len, state_dim)
+                # hidden_batch: (batch_size, hidden_dim)
                 logits, values, _ = self.model(s_batch, hidden_batch)
-                dist = Categorical(logits=logits)
-                new_log_probs = dist.log_prob(a_batch)
+                # logits: (batch_size, seq_len, action_dim)
+                # values: (batch_size, seq_len, 1)
                 
-                # 重要性采样比率
-                ratio = (new_log_probs - old_lp_batch).exp()
-                covs = (new_log_probs - new_log_probs.mean()) * (adv_batch - adv_batch.mean())
-                corr = torch.ones_like(adv_batch)
+                # 7. 将输出和标签展平以计算损失
+                # (batch_size, seq_len, dim) -> (batch_size * seq_len, dim)
+                logits_flat = logits.view(-1, logits.shape[-1])
+                values_flat = values.view(-1)
+                a_batch_flat = a_batch.view(-1)
+                old_lp_batch_flat = old_lp_batch.view(-1)
+                adv_batch_flat = adv_batch.view(-1)
+                ret_batch_flat = ret_batch.view(-1)
+
+                dist = Categorical(logits=logits_flat)
+                new_log_probs = dist.log_prob(a_batch_flat)
                 
-                # 策略损失计算  
+                ratio = (new_log_probs - old_lp_batch_flat).exp()
+                covs = (new_log_probs - new_log_probs.mean()) * (adv_batch_flat - adv_batch_flat.mean())
+                corr = torch.ones_like(adv_batch_flat)
+                
                 clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)
-                surr1 = clip_ratio * adv_batch
-                surr2 = torch.clamp(ratio, 1 - self.cfg.clip_eps_min, 1 + self.cfg.clip_eps_max) * adv_batch
+                surr1 = clip_ratio * adv_batch_flat
+                surr2 = torch.clamp(ratio, 1 - self.cfg.clip_eps_min, 1 + self.cfg.clip_eps_max) * adv_batch_flat
                 clip_idx = torch.where((covs > self.cfg.clip_cov_min) & (covs < self.cfg.clip_cov_max))[0]
                 if len(clip_idx) > 0 and self.cfg.clip_cov_ratio > 0:
                     clip_num = max(int(len(clip_idx) * self.cfg.clip_cov_ratio), 1)
@@ -387,42 +436,34 @@ class PPOTrainer:
                 clip_frac = torch.mean(((ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))).float() * corr)
                 policy_loss = torch.mean(-torch.min(surr1, surr2) * corr)
                 
-                # 值函数损失计算
-                value_loss = torch.mean(0.5 * corr * (values.squeeze() - ret_batch).pow(2))
+                value_loss = torch.mean(0.5 * corr * (values_flat - ret_batch_flat).pow(2))
                 
-                # 熵正则项
                 entropy = (dist.entropy() * corr).mean()
                 entropy_loss = torch.mean(-self.ent_coef * entropy)
                 
-                # 总损失计算
                 loss = policy_loss + value_loss + entropy_loss
                 
-                # 参数更新步骤
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.max_grad_norm)
                 self.optimizer.step()
                 
-                # 记录训练指标
                 policy_losses.append(policy_loss.item())
                 value_losses.append(value_loss.item())
                 entropy_losses.append(entropy.item())
                 clip_fracs.append(clip_frac.item())
                 covs_list.append(covs.mean().item())
                 
-                # 计算近似KL散度
                 with torch.no_grad():
-                    approx_kl = (old_lp_batch - new_log_probs).mean().item()
+                    approx_kl = (old_lp_batch_flat - new_log_probs).mean().item()
                     approx_kls.append(approx_kl)
         
-        # 学习率退火 
         if self.cfg.anneal:
             self.lr = self.cfg.lr * (1 - self.step_count / self.cfg.max_train_steps)
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = self.lr
             self.ent_coef = self.cfg.entropy_coef * (1 - self.step_count / self.cfg.max_train_steps)
         
-        # 输出训练信息
         print(
             f"Policy Loss: {np.mean(policy_losses):.4f} | "
             f"Value Loss: {np.mean(value_losses):.4f} | "
@@ -441,7 +482,6 @@ class PPOTrainer:
             advantages, returns = self.compute_advantages()
             self.update_model(advantages, returns)
             
-            # 输出训练进度
             if len(self.episode_rewards) > 0:
                 mean_reward = np.mean(self.episode_rewards)
                 print(f"Step: {self.step_count}, Avg Reward: {mean_reward:.2f}")
@@ -455,7 +495,6 @@ class PPOTrainer:
             state, _ = self.env.reset(seed=seed)
             episode_reward = 0
             done = False
-            # 初始化隐藏状态
             hidden_state = torch.zeros(1, self.hidden_size, device=self.cfg.device)
             while not done:
                 with torch.no_grad():
@@ -478,10 +517,8 @@ class PPOTrainer:
         seed = random.randint(1, 2**31 - 1) if self.cfg.seed is None else self.cfg.seed
         env = gym.make(self.cfg.env_name, render_mode='human')
         state, _ = env.reset(seed=seed)
-        env.render()
         done = False
         total_reward = 0
-        # 初始化隐藏状态
         hidden_state = torch.zeros(1, self.hidden_size, device=self.cfg.device)
         
         while not done:
@@ -514,7 +551,9 @@ if __name__ == "__main__":
     try:
         ppo.train()
     except KeyboardInterrupt:
-        print("\n训练被中断，开始测试...")
-        ppo.test()
-    else:
-        ppo.test()
+        # 捕获 KeyboardInterrupt 以便在手动停止时也能测试
+        pass
+    
+    print("\n训练完成或被中断，开始最终测试...")
+    ppo.test()
+
