@@ -25,14 +25,14 @@ class Config:
         self.max_train_steps = 5e6      # 最大训练步数
         self.update_freq = 4096         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
-        self.seq_len = 16               # RNN处理的序列长度
-        self.batch_size = 64            # 批次大小(序列的数量)
+        self.seq_len = 8                # RNN处理的序列长度
+        self.batch_size = 128           # 批次大小(序列的数量)
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
         self.lam_critic = 0.97          # GAE参数 - critic
         self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数 
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
-        self.clip_cov_ratio = 0.06      # PPO-COV-RATIO参数
+        self.clip_cov_ratio = 0.25      # PPO-COV-RATIO参数
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
@@ -47,21 +47,21 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.shared = PSCN(
             input_dim=state_dim, 
-            output_dim=256, 
+            output_dim=512, 
             depth=4,
         )
         
         self.rnn = URNN(
-            input_size=256, 
-            hidden_size=256, 
+            input_size=512, 
+            hidden_size=512, 
             layer=nn.LSTM,
         )   
         
-        self.actor = MLP([256, 256, action_dim], last_std=0.001)
-        self.critic = MLP([256, 256, 1], last_std=1.0)
+        self.actor = MLP([512, 512, action_dim], last_std=0.001)
+        self.critic = MLP([512, 512, 1], last_std=1.0)
         self.rnd = RND(
             input_dim=state_dim,
-            embed_dim=256,
+            embed_dim=512,
         )
             
     def forward(self, x, hidden_state):
@@ -273,7 +273,8 @@ class RND(nn.Module):
 
     def forward(self, x):
         predict = self.predictor(x)
-        target = self.target(x)
+        with torch.no_grad():
+            target = self.target(x)
         return predict, target
 
 class CausalConv1D(nn.Module):
@@ -449,7 +450,7 @@ class PPOTrainer:
         action_dim = self.env.action_space.n
         
         self.model = ActorCritic(state_dim, action_dim).to(self.cfg.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.cfg.lr, eps=1e-5)
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=self.cfg.lr, eps=1e-5, weight_decay=1e-2)
         self.hidden_size = self.model.rnn.hidden_size * self.model.rnn.chunk_size
         print(f"Model hidden size: {self.hidden_size}")
         
