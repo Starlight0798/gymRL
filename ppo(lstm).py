@@ -475,6 +475,7 @@ class PPOTrainer:
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
             rnd_reward = np.mean((predict - target) ** 2)
+            episode_reward += reward
             reward += rnd_reward
             
             self.buffer.states.append(state)
@@ -486,7 +487,6 @@ class PPOTrainer:
             
             state = next_state
             hidden_state = next_hidden_state 
-            episode_reward += reward
             self.step_count += 1
             
             if done:
