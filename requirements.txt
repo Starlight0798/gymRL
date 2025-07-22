@@ -2,7 +2,7 @@
 
 gym
 swig
-gymnasium==0.29
+gymnasium
 gymnasium[box2d]
 ale-py
 flappy-bird-gymnasium
