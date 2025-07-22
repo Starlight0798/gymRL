@@ -275,7 +275,6 @@ class RND(nn.Module):
         predict = self.predictor(x)
         target = self.target(x)
         return predict, target
-    
 
 class CausalConv1D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, dilation=1, **kwargs):
@@ -483,6 +482,7 @@ class PPOTrainer:
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
             rnd_reward = np.mean((predict - target) ** 2)
+            episode_reward += reward
             reward += rnd_reward
             
             self.buffer.states.append(state)
@@ -494,7 +494,6 @@ class PPOTrainer:
             
             state = next_state
             hidden_state = next_hidden_state 
-            episode_reward += reward
             self.step_count += 1
             
             if done:
