@@ -10,7 +10,7 @@ from collections import deque
 import warnings
 import signal
 import sys
-from typing import List, Type, Optional, Tuple
+from typing import List, Type, Optional
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -32,7 +32,7 @@ class Config:
         self.lam_critic = 0.97          # GAE参数 - critic
         self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数 
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
-        self.clip_cov_ratio = 0.15      # PPO-COV-RATIO参数
+        self.clip_cov_ratio = 0.06      # PPO-COV-RATIO参数
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
@@ -59,7 +59,10 @@ class ActorCritic(nn.Module):
         
         self.actor = MLP([256, 256, action_dim], last_std=0.001)
         self.critic = MLP([256, 256, 1], last_std=1.0)
-        self.rnd = RND(input_dim=state_dim)
+        self.rnd = RND(
+            input_dim=state_dim,
+            embed_dim=256,
+        )
             
     def forward(self, x, hidden_state):
         """
@@ -251,13 +254,18 @@ class URNN(nn.Module):
         return rnn_out, new_hidden_state
     
 class RND(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, embed_dim):
         super(RND, self).__init__()
+        min_dim = 2 ** 4
+        assert np.log2(embed_dim).is_integer(), "embed_dim must be a power of 2"
+        assert embed_dim >= min_dim, f"embed_dim must be at least {min_dim}"
+        assert embed_dim % min_dim == 0, f"embed_dim must be divisible by {min_dim}"
+        depth = np.log2(embed_dim // min_dim).astype(int)
         self.predictor, self.target = [
             PSCN(
                 input_dim=input_dim, 
-                output_dim=256, 
-                depth=4
+                output_dim=embed_dim,
+                depth=depth
             ) for _ in range(2)
         ]
         for param in self.target.parameters():
@@ -475,7 +483,6 @@ class PPOTrainer:
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
             rnd_reward = np.mean((predict - target) ** 2)
-            episode_reward += reward
             reward += rnd_reward
             
             self.buffer.states.append(state)
@@ -487,6 +494,7 @@ class PPOTrainer:
             
             state = next_state
             hidden_state = next_hidden_state 
+            episode_reward += reward
             self.step_count += 1
             
             if done:
