@@ -6,7 +6,25 @@
 -  PPO: dual-PPO, clip-PPO, use-RNN, attention, PPG etc.
 -  DQN: rainbow DQN
 
-经实验，PPO算法加入LSTM(或GRU)提取时序特征后效果显著，读者可以尝试。
+## 更新
+
+> 注：最新尝试集中在PPO算法进行，建议参阅ppo(full)以及ppo(lstm)
+
+经实验，PPO算法是最具鲁棒性的算法，为主要选择。
+
+PPO可以加入以下几个trick(部分是当今大模型RL的trick)，基本都有指标提升:
+
+- value_clip
+- clip-higher
+- ent_coef
+- decouple-lamda
+- dual-clip
+- clip-covs
+- RND-reward
+- use-LSTM
+- adam-eps
+
+具体我已经实现在ppo(lstm)，可以参考代码以及相关的论文。
 
 ## 算法介绍
 
@@ -32,7 +50,7 @@ TD3是对DDPG的改进，通过延迟更新策略网络和目标网络来减少Q
 
 ------
 
-我在离散动作空间的代码探索主要在PPO和PPO+RNN代码进行，读者可以重点关注。
+我在离散动作空间的代码探索主要在PPO和PPO+LSTM代码进行，读者可以重点关注。
 
 ### Tensorboard-SummaryWriter使用
 
@@ -85,12 +103,4 @@ class Config(BasicConfig):
 对PPO感兴趣的读者可以参考其中PPO以及PPO+RNN的算法，使用了RNN，PSCN等技巧。
 
 对于连续动作空间，最推荐使用的算法是TD3，参考`Pendulum(TD3)`。离散空间`DQN`和`PPO`均可。
-
-## 更新
-
-- 加入torch.jit.script使用，jit优化能显著提升推理速度
-- 使用混合精度可优化降低显存使用
-- 使用CosineAnnealingLR调整学习率
-- 网络可使用RNN(LSTM or GRU)，需继承*BaseRNNModel*
-- 使用PReLU替代ReLU，可减少”神经元死亡“现象
 
