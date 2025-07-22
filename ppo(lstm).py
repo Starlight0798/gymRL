@@ -22,17 +22,17 @@ class Config:
         self.seed = None
         
         # 训练参数
-        self.max_train_steps = 3e6      # 最大训练步数
+        self.max_train_steps = 5e6      # 最大训练步数
         self.update_freq = 4096         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
-        self.seq_len = 8                # RNN处理的序列长度
-        self.batch_size = 128           # 批次大小(序列的数量)
+        self.seq_len = 16               # RNN处理的序列长度
+        self.batch_size = 64            # 批次大小(序列的数量)
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
         self.lam_critic = 0.97          # GAE参数 - critic
         self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数 
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
-        self.clip_cov_ratio = 0.06      # PPO-COV-RATIO参数
+        self.clip_cov_ratio = 0.15      # PPO-COV-RATIO参数
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
@@ -41,6 +41,66 @@ class Config:
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
         self.anneal = False             # 是否退火
         self.device = 'cpu'
+        
+class ActorCritic(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super().__init__()
+        self.shared = PSCN(
+            input_dim=state_dim, 
+            output_dim=256, 
+            depth=4,
+        )
+        
+        self.rnn = URNN(
+            input_size=256, 
+            hidden_size=256, 
+            layer=nn.LSTM,
+        )   
+        
+        self.actor = MLP([256, 256, action_dim], last_std=0.001)
+        self.critic = MLP([256, 256, 1], last_std=1.0)
+        self.rnd = RND(input_dim=state_dim)
+            
+    def forward(self, x, hidden_state):
+        """
+        可以处理单步或序列数据。
+        x: (batch, state_dim) 或 (batch, seq_len, state_dim)
+        hidden_state: (batch, hidden_dim)
+        """
+        # 检查输入是单步还是序列
+        is_sequence = x.dim() == 3
+        if not is_sequence:
+            # 如果是单步，增加一个时间维度，使其成为长度为1的序列
+            x = x.unsqueeze(1)
+
+        predict, target = self.rnd(x)
+        x = self.shared(x)
+        rnn_out, new_hidden_state = self.rnn(x, hidden_state)
+        logits = self.actor(rnn_out)
+        value = self.critic(rnn_out)
+
+        if not is_sequence:
+            # 如果输入是单步，则移除时间维度以保持输出格式一致
+            logits = logits.squeeze(1)
+            value = value.squeeze(1)
+            predict = predict.squeeze(1)
+            target = target.squeeze(1)
+        
+        return logits, value, new_hidden_state, predict, target
+    
+    def get_action(self, x, hidden_state, deterministic=False):
+        """采样动作并返回相关数据和新的隐藏状态"""
+        logits, value, new_hidden_state, predict, target = self.forward(x, hidden_state)
+        dist = Categorical(logits=logits)
+        action = dist.sample() if not deterministic else logits.argmax(dim=-1)
+        log_prob = dist.log_prob(action)
+        # 使用 .squeeze(-1) 更安全，避免当 batch_size=1 时维度被完全压缩
+        return action.cpu().item(), log_prob.cpu().item(), value.squeeze(-1).cpu().item(), new_hidden_state, predict.cpu().numpy(), target.cpu().numpy()
+
+    def get_value(self, x, hidden_state):
+        """获取状态价值"""
+        _, value, _, _, _ = self.forward(x, hidden_state)
+        return value.squeeze(-1).cpu()
 
 def layer_init(layer, std: float):
     if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear):
@@ -190,6 +250,24 @@ class URNN(nn.Module):
             
         return rnn_out, new_hidden_state
     
+class RND(nn.Module):
+    def __init__(self, input_dim):
+        super(RND, self).__init__()
+        self.predictor, self.target = [
+            PSCN(
+                input_dim=input_dim, 
+                output_dim=256, 
+                depth=4
+            ) for _ in range(2)
+        ]
+        for param in self.target.parameters():
+            param.requires_grad = False
+
+    def forward(self, x):
+        predict = self.predictor(x)
+        target = self.target(x)
+        return predict, target
+    
 
 class CausalConv1D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, dilation=1, **kwargs):
@@ -327,64 +405,6 @@ class sLSTM(nn.Module):
         state = tuple(state.transpose(0, 1))
         return output, state
 
-class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super().__init__()
-        self.shared = PSCN(
-            input_dim=state_dim, 
-            output_dim=256, 
-            depth=4,
-        )
-        
-        self.rnn = URNN(
-            input_size=256, 
-            hidden_size=256, 
-            layer=sLSTM,
-            num_layers=1,
-            num_heads=4,
-        )   
-        
-        self.actor = MLP([256, 256, action_dim], last_std=0.001)
-        self.critic = MLP([256, 256, 1], last_std=1.0)
-            
-    def forward(self, x, hidden_state):
-        """
-        可以处理单步或序列数据。
-        x: (batch, state_dim) 或 (batch, seq_len, state_dim)
-        hidden_state: (batch, hidden_dim)
-        """
-        # 检查输入是单步还是序列
-        is_sequence = x.dim() == 3
-        if not is_sequence:
-            # 如果是单步，增加一个时间维度，使其成为长度为1的序列
-            x = x.unsqueeze(1)
-
-        x = self.shared(x)
-        rnn_out, new_hidden_state = self.rnn(x, hidden_state)
-        logits = self.actor(rnn_out)
-        value = self.critic(rnn_out)
-
-        if not is_sequence:
-            # 如果输入是单步，则移除时间维度以保持输出格式一致
-            logits = logits.squeeze(1)
-            value = value.squeeze(1)
-        
-        return logits, value, new_hidden_state
-    
-    def get_action(self, x, hidden_state, deterministic=False):
-        """采样动作并返回相关数据和新的隐藏状态"""
-        logits, value, new_hidden_state = self.forward(x, hidden_state)
-        dist = Categorical(logits=logits)
-        action = dist.sample() if not deterministic else logits.argmax(dim=-1)
-        log_prob = dist.log_prob(action)
-        # 使用 .squeeze(-1) 更安全，避免当 batch_size=1 时维度被完全压缩
-        return action.cpu().item(), log_prob.cpu().item(), value.squeeze(-1).cpu().item(), new_hidden_state
-    
-    def get_value(self, x, hidden_state):
-        """获取状态价值"""
-        _, value, _ = self.forward(x, hidden_state)
-        return value.squeeze(-1).cpu()
-
 class RolloutBuffer:
     def __init__(self):
         self.states = []
@@ -450,10 +470,12 @@ class PPOTrainer:
             self.buffer.hidden_states.append(hidden_state.squeeze(0).cpu().numpy())
 
             with torch.no_grad():
-                action, log_prob, value, next_hidden_state = self.model.get_action(state_tensor, hidden_state)
+                action, log_prob, value, next_hidden_state, predict, target = self.model.get_action(state_tensor, hidden_state)
                 
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
+            rnd_reward = np.mean((predict - target) ** 2)
+            reward += rnd_reward
             
             self.buffer.states.append(state)
             self.buffer.actions.append(action)
@@ -508,6 +530,7 @@ class PPOTrainer:
         old_log_probs = torch.tensor(self.buffer.log_probs, dtype=torch.float32).to(self.cfg.device)
         advantages = torch.tensor(advantages, dtype=torch.float32).to(self.cfg.device)
         returns = torch.tensor(returns, dtype=torch.float32).to(self.cfg.device)
+        old_values = torch.tensor(self.buffer.values, dtype=torch.float32).to(self.cfg.device)
         hidden_states = torch.tensor(np.array(self.buffer.hidden_states), dtype=torch.float32).to(self.cfg.device)
 
         # 2. 将扁平数据重塑为序列
@@ -517,12 +540,13 @@ class PPOTrainer:
         old_log_probs = old_log_probs.view(self.num_sequences, self.cfg.seq_len)
         advantages = advantages.view(self.num_sequences, self.cfg.seq_len)
         returns = returns.view(self.num_sequences, self.cfg.seq_len)
+        old_values = old_values.view(self.num_sequences, self.cfg.seq_len)
         
         # 3. 提取每个序列的初始隐藏状态
         # 我们只需要每个序列开始时的那个隐藏状态
         initial_hidden_states = hidden_states[::self.cfg.seq_len]
 
-        policy_losses, value_losses, entropy_losses = [], [], []
+        policy_losses, value_losses, entropy_losses, rnd_losses = [], [], [], []
         approx_kls, clip_fracs, covs_list = [], [], []
         
         for _ in range(self.cfg.num_epochs):
@@ -540,11 +564,12 @@ class PPOTrainer:
                 adv_batch = advantages[idx]
                 ret_batch = returns[idx]
                 hidden_batch = initial_hidden_states[idx]
+                val_batch = old_values[idx]
 
                 # 6. 模型前向传播，一次处理整个序列
                 # s_batch: (batch_size, seq_len, state_dim)
                 # hidden_batch: (batch_size, hidden_dim)
-                logits, values, _ = self.model(s_batch, hidden_batch)
+                logits, values, _, predict, target = self.model(s_batch, hidden_batch)
                 # logits: (batch_size, seq_len, action_dim)
                 # values: (batch_size, seq_len, 1)
                 
@@ -556,6 +581,7 @@ class PPOTrainer:
                 old_lp_batch_flat = old_lp_batch.view(-1)
                 adv_batch_flat = adv_batch.view(-1)
                 ret_batch_flat = ret_batch.view(-1)
+                old_values_flat = val_batch.view(-1)
 
                 dist = Categorical(logits=logits_flat)
                 new_log_probs = dist.log_prob(a_batch_flat)
@@ -575,12 +601,17 @@ class PPOTrainer:
                 clip_frac = torch.mean(((ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))).float() * corr)
                 policy_loss = torch.mean(-torch.min(surr1, surr2) * corr)
                 
-                value_loss = torch.mean(0.5 * corr * (values_flat - ret_batch_flat).pow(2))
+                value_clip = old_values_flat + (values_flat - old_values_flat).clamp(-self.cfg.clip_eps_min, self.cfg.clip_eps_max)
+                value_loss1 = (values_flat - ret_batch_flat).pow(2)
+                value_loss2 = (value_clip - ret_batch_flat).pow(2)
+                value_loss = 0.5 * torch.mean(corr * torch.max(value_loss1, value_loss2))
                 
                 entropy = (dist.entropy() * corr).mean()
-                entropy_loss = torch.mean(-self.ent_coef * entropy)
+                entropy_loss = self.ent_coef * -entropy
                 
-                loss = policy_loss + value_loss + entropy_loss
+                rnd_loss = (predict - target).pow(2).mean()
+                
+                loss = policy_loss + value_loss + entropy_loss + rnd_loss
                 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -590,6 +621,7 @@ class PPOTrainer:
                 policy_losses.append(policy_loss.item())
                 value_losses.append(value_loss.item())
                 entropy_losses.append(entropy.item())
+                rnd_losses.append(rnd_loss.item())
                 clip_fracs.append(clip_frac.item())
                 covs_list.append(covs.mean().item())
                 
@@ -607,6 +639,7 @@ class PPOTrainer:
             f"Policy Loss: {np.mean(policy_losses):.4f} | "
             f"Value Loss: {np.mean(value_losses):.4f} | "
             f"Entropy: {np.mean(entropy_losses):.4f} | "
+            f"RND Loss: {np.mean(rnd_losses):.4f} | "
             f"KL: {np.mean(approx_kls):.4f} | "
             f"Clip Frac: {np.mean(clip_fracs):.2%} | "
             f"LR: {self.optimizer.param_groups[0]['lr']:.6f} | "
@@ -637,7 +670,7 @@ class PPOTrainer:
             hidden_state = torch.zeros(1, self.hidden_size, device=self.cfg.device)
             while not done:
                 with torch.no_grad():
-                    action, _, _, hidden_state = self.model.get_action(
+                    action, _, _, hidden_state, _, _ = self.model.get_action(
                         torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), 
                         hidden_state,
                         deterministic=True
@@ -663,7 +696,7 @@ class PPOTrainer:
         while not done:
             env.render()
             with torch.no_grad():
-                action, _, _, hidden_state = self.model.get_action(
+                action, _, _, hidden_state, _, _ = self.model.get_action(
                     torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), 
                     hidden_state,
                     deterministic=True
