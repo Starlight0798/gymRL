@@ -5,7 +5,6 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from collections import deque
-from torch.cuda.amp import GradScaler, autocast
 
 
 class Config:
@@ -85,7 +84,6 @@ class DQN:
         self.cfg = cfg
         self.epsilon = cfg.epsilon_start
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=cfg.lr)
-        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -117,16 +115,13 @@ class DQN:
         next_state_batch = torch.tensor(np.array(next_state_batch), device=self.cfg.device, dtype=torch.float32)
         done_batch = torch.tensor(np.array(done_batch), device=self.cfg.device, dtype=torch.float32)
         
-        with autocast():
-            q_value = self.policy_net(state_batch).gather(1, action_batch)
-            next_q_value = self.target_net(next_state_batch).max(dim=1)[0].detach()
-            expect_q_value = reward_batch + self.cfg.gamma * next_q_value * (1 - done_batch)
-            loss = F.mse_loss(q_value, expect_q_value.unsqueeze(1))
+        q_value = self.policy_net(state_batch).gather(1, action_batch)
+        next_q_value = self.target_net(next_state_batch).max(dim=1)[0].detach()
+        expect_q_value = reward_batch + self.cfg.gamma * next_q_value * (1 - done_batch)
+        loss = F.mse_loss(q_value, expect_q_value.unsqueeze(1))
             
         self.optimizer.zero_grad()
-        self.scaler.scale(loss).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        loss.backward()
         
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)

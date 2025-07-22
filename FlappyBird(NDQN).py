@@ -5,7 +5,6 @@ from torch.nn import functional as F
 from utils.model import *
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
 from utils.runner import *
-from torch.cuda.amp import autocast, GradScaler
 import flappy_bird_gymnasium
 
 
@@ -51,7 +50,6 @@ class DQN(ModelLoader):
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
         self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr)
-        self.scaler = GradScaler()
         self.cfg = cfg
         self.learn_step = 0
         for param in self.target_net.parameters():
@@ -82,20 +80,17 @@ class DQN(ModelLoader):
             dones.view(-1, 1)
 
         with torch.no_grad():
-            with autocast():
-                a_argmax = self.net(next_states).argmax(dim=-1, keepdim=True)
-                q_target = (rewards + self.cfg.gamma * (1 - dones) *
-                            self.target_net(next_states).gather(-1, a_argmax)).squeeze(-1)
+            a_argmax = self.net(next_states).argmax(dim=-1, keepdim=True)
+            q_target = (rewards + self.cfg.gamma * (1 - dones) *
+                        self.target_net(next_states).gather(-1, a_argmax)).squeeze(-1)
 
-        with autocast():
-            q_current = self.net(states).gather(-1, actions).squeeze(-1)
-            loss = F.mse_loss(q_current, q_target)
+        q_current = self.net(states).gather(-1, actions).squeeze(-1)
+        loss = F.mse_loss(q_current, q_target)
 
         self.optimizer.zero_grad()
-        self.scaler.scale(loss).backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip)
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        self.optimizer.step()
         self.learn_step += 1
         
         if self.learn_step % self.cfg.target_update == 0:

@@ -6,7 +6,6 @@ from copy import deepcopy
 from torch import nn, optim
 from torch.distributions import Normal
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler, autocast
 
 
 class Config:
@@ -122,7 +121,6 @@ class SAC:
 
         self.log_alpha = torch.tensor(np.log(0.01), requires_grad=True, device=cfg.device, dtype=torch.float32)
         self.alpha_optim = optim.Adam([self.log_alpha], lr=cfg.lr_alpha)
-        self.scaler = GradScaler()
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -148,38 +146,34 @@ class SAC:
         state, action, reward, next_state, done = self.memory.sample()
         action, reward, done = action.view(-1, 1), reward.view(-1, 1), done.view(-1, 1)
         
-        with autocast():
-            target_q = self.calc_target_q(reward, next_state, done)
-            q1 = self.critic1(state, action)
-            q2 = self.critic2(state, action)
-            critic1_loss = torch.mean(F.mse_loss(q1, target_q.detach()))
-            critic2_loss = torch.mean(F.mse_loss(q2, target_q.detach()))
+        target_q = self.calc_target_q(reward, next_state, done)
+        q1 = self.critic1(state, action)
+        q2 = self.critic2(state, action)
+        critic1_loss = torch.mean(F.mse_loss(q1, target_q.detach()))
+        critic2_loss = torch.mean(F.mse_loss(q2, target_q.detach()))
             
         self.critic1_optim.zero_grad()
-        self.scaler.scale(critic1_loss).backward()
-        self.scaler.step(self.critic1_optim)
+        critic1_loss.backward()
+        self.critic1_optim.step()
         
         self.critic2_optim.zero_grad()
-        self.scaler.scale(critic2_loss).backward()
-        self.scaler.step(self.critic2_optim)
+        critic2_loss.backward()
+        self.critic2_optim.step()
 
-        with autocast():
-            new_action, log_prob = self.actor(state)
-            q = torch.min(self.critic1(state, new_action), self.critic2(state, new_action))
-            actor_loss = (self.log_alpha.exp() * log_prob - q).mean()
+        new_action, log_prob = self.actor(state)
+        q = torch.min(self.critic1(state, new_action), self.critic2(state, new_action))
+        actor_loss = (self.log_alpha.exp() * log_prob - q).mean()
             
         self.actor_optim.zero_grad()
-        self.scaler.scale(actor_loss).backward()
-        self.scaler.step(self.actor_optim)
+        actor_loss.backward()
+        self.actor_optim.step()
 
-        with autocast():
-            alpha_loss = torch.mean(self.log_alpha * (-log_prob - self.cfg.target_entropy).detach())
+        alpha_loss = torch.mean(self.log_alpha * (-log_prob - self.cfg.target_entropy).detach())
         
         self.alpha_optim.zero_grad()
-        self.scaler.scale(alpha_loss).backward()
-        self.scaler.step(self.alpha_optim)
+        alpha_loss.backward()
+        self.alpha_optim.step()
 
-        self.scaler.update()
         self.soft_update(self.critic1_target, self.critic1)
         self.soft_update(self.critic2_target, self.critic2)
 

@@ -5,26 +5,25 @@ from torch.nn import functional as F
 from utils.model import *
 from utils.buffer import ReplayBuffer_off_policy as ReplayBuffer
 from utils.runner import *
-from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class Config(BasicConfig):
     def __init__(self):
         super(Config, self).__init__()
         self.env_name = 'CartPole-v1'
         self.algo_name = 'NDQN'
-        self.train_eps = 500
-        self.lr_start = 5e-4
-        self.lr_end = 5e-5
-        self.batch_size = 128
+        self.train_eps = 1000
+        self.lr = 1e-3
+        self.batch_size = 256
         self.memory_capacity = 10000
-        self.target_update = 400
+        self.target_update = 500
+        self.load_model = False
 
 class DQNnet(nn.Module):
     def __init__(self, cfg):
         super(DQNnet, self).__init__()
-        self.fc = MLP([cfg.n_states, 16, 32], last_act=True)
-        self.fc_a = MLP([32, cfg.n_actions], linear=NoisyLinear)
-        self.fc_v = MLP([32, 1], linear=NoisyLinear)
+        self.fc = MLP([cfg.n_states, 64, 64], last_act=True, linear=NoisyLinear)
+        self.fc_a = MLP([64, cfg.n_actions], linear=NoisyLinear)
+        self.fc_v = MLP([64, 1], linear=NoisyLinear)
 
     def forward(self, s):
         x = self.fc(s)
@@ -40,12 +39,10 @@ class DQN(ModelLoader):
         self.net = DQNnet(cfg).to(cfg.device)
         self.target_net = DQNnet(cfg).to(cfg.device)
         self.target_net.load_state_dict(self.net.state_dict())
-        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr_start)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.train_eps, eta_min=cfg.lr_end)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=cfg.lr)
         self.cfg = cfg
         self.learn_step = 0
         self.predict_step = 0
-        self.lr = cfg.lr_start
 
     @torch.no_grad()
     def choose_action(self, state):
@@ -75,7 +72,6 @@ class DQN(ModelLoader):
         loss.backward()
         self.optimizer.step()
 
-        self.scheduler.step()
         self.learn_step += 1
         if self.learn_step % self.cfg.target_update == 0:
             self.target_net.load_state_dict(self.net.state_dict())
