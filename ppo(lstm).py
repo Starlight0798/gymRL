@@ -36,7 +36,7 @@ class Config:
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
-        self.entropy_coef = 0.01        # 熵奖励系数
+        self.entropy_coef = 0.02        # 熵奖励系数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
         self.anneal = False             # 是否退火
@@ -47,21 +47,21 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.shared = PSCN(
             input_dim=state_dim, 
-            output_dim=256, 
-            depth=4,
+            output_dim=512, 
+            depth=5,
         )
         
         self.rnn = URNN(
-            input_size=256, 
-            hidden_size=256, 
+            input_size=512, 
+            hidden_size=512, 
             layer=nn.LSTM,
         )   
         
-        self.actor = MLP([256, 256, action_dim], last_std=0.001)
-        self.critic = MLP([256, 256, 1], last_std=1.0)
+        self.actor = MLP([512, 512, action_dim], last_std=0.001)
+        self.critic = MLP([512, 512, 1], last_std=1.0)
         self.rnd = RND(
             input_dim=state_dim,
-            embed_dim=256,
+            embed_dim=512,
         )
             
     def forward(self, x, hidden_state):
@@ -221,8 +221,6 @@ class URNN(nn.Module):
             self.chunk_size = 2
         elif isinstance(self.rnn, nn.GRU):
             self.chunk_size = 1
-        elif isinstance(self.rnn, sLSTM):
-            self.chunk_size = 4
         else:
             raise ValueError("Unsupported RNN layer type.")
         
@@ -276,142 +274,6 @@ class RND(nn.Module):
         with torch.no_grad():
             target = self.target(x)
         return predict, target
-
-class CausalConv1D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, **kwargs):
-        super(CausalConv1D, self).__init__()
-        self.padding = (kernel_size - 1) * dilation
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=self.padding, dilation=dilation, **kwargs)
-
-    def forward(self, x):
-        x = self.conv(x)
-        return x[:, :, :-self.padding]
-
-class BlockDiagonal(nn.Module):
-    def __init__(self, in_features, out_features, num_blocks):
-        super(BlockDiagonal, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.num_blocks = num_blocks
-
-        assert in_features % num_blocks == 0
-        assert out_features % num_blocks == 0
-
-        block_in_features = in_features // num_blocks
-        block_out_features = out_features // num_blocks
-
-        self.blocks = nn.ModuleList([
-            nn.Linear(block_in_features, block_out_features) for _ in range(num_blocks)
-        ])
-
-    def forward(self, x):
-        x = x.chunk(self.num_blocks, dim=-1)
-        x = [block(x_i) for block, x_i in zip(self.blocks, x)]
-        x = torch.cat(x, dim=-1)
-        return x
-
-class sLSTMBlock(nn.Module):
-    def __init__(self, input_size, hidden_size, num_heads, proj_factor=4 / 3):
-        super(sLSTMBlock, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.head_size = hidden_size // num_heads
-        self.proj_factor = proj_factor
-
-        assert hidden_size % num_heads == 0
-        assert proj_factor > 0
-
-        self.input_norm = RMSNorm(input_size)
-        self.causal_conv = CausalConv1D(1, 1, 4)
-
-        self.Wz = BlockDiagonal(input_size, hidden_size, num_heads)
-        self.Wi = BlockDiagonal(input_size, hidden_size, num_heads)
-        self.Wf = BlockDiagonal(input_size, hidden_size, num_heads)
-        self.Wo = BlockDiagonal(input_size, hidden_size, num_heads)
-
-        self.Rz = BlockDiagonal(hidden_size, hidden_size, num_heads)
-        self.Ri = BlockDiagonal(hidden_size, hidden_size, num_heads)
-        self.Rf = BlockDiagonal(hidden_size, hidden_size, num_heads)
-        self.Ro = BlockDiagonal(hidden_size, hidden_size, num_heads)
-
-        self.group_norm = nn.GroupNorm(num_heads, hidden_size)
-
-        self.up_proj_left = nn.Linear(hidden_size, int(hidden_size * proj_factor))
-        self.up_proj_right = nn.Linear(hidden_size, int(hidden_size * proj_factor))
-        self.down_proj = nn.Linear(int(hidden_size * proj_factor), input_size)
-
-    def forward(self, x, prev_state):
-        assert x.size(-1) == self.input_size
-        h_prev, c_prev, n_prev, m_prev = prev_state
-        x_norm = self.input_norm(x)
-        x_conv = F.silu(self.causal_conv(x_norm.unsqueeze(1)).squeeze(1))
-
-        z = torch.tanh(self.Wz(x) + self.Rz(h_prev))
-        o = torch.sigmoid(self.Wo(x) + self.Ro(h_prev))
-        i_tilde = self.Wi(x_conv) + self.Ri(h_prev)
-        f_tilde = self.Wf(x_conv) + self.Rf(h_prev)
-
-        m_t = torch.max(f_tilde + m_prev, i_tilde)
-        i = torch.exp(i_tilde - m_t)
-        f = torch.exp(f_tilde + m_prev - m_t)
-
-        c_t = f * c_prev + i * z
-        n_t = f * n_prev + i
-        h_t = o * c_t / n_t
-
-        output = h_t
-        output_norm = self.group_norm(output)
-        output_left = self.up_proj_left(output_norm)
-        output_right = self.up_proj_right(output_norm)
-        output_gated = F.gelu(output_right)
-        output = output_left * output_gated
-        output = self.down_proj(output)
-        final_output = output + x
-
-        return final_output, (h_t, c_t, n_t, m_t)
-
-class sLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_heads, num_layers=1, batch_first=False, proj_factor=4 / 3):
-        super(sLSTM, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.num_layers = num_layers
-        self.batch_first = batch_first
-        self.proj_factor_slstm = proj_factor
-        self.layers = nn.ModuleList([sLSTMBlock(input_size, hidden_size, num_heads, proj_factor) for _ in range(num_layers)])
-
-    def forward(self, x, state=None):
-        assert x.ndim == 3
-        if self.batch_first: x = x.transpose(0, 1)
-        seq_len, batch_size, _ = x.size()
-
-        if state is not None:
-            state = torch.stack(list(state)).to(x.device)
-            assert state.ndim == 4
-            num_hidden, state_num_layers, state_batch_size, state_input_size = state.size()
-            assert num_hidden == 4
-            assert state_num_layers == self.num_layers
-            assert state_batch_size == batch_size
-            assert state_input_size == self.input_size
-            state = state.transpose(0, 1)
-        else:
-            state = torch.zeros(self.num_layers, 4, batch_size, self.hidden_size, device=x.device)
-
-        output = []
-        for t in range(seq_len):
-            x_t = x[t]
-            for layer in range(self.num_layers):
-                x_t, state_tuple = self.layers[layer](x_t, tuple(state[layer].clone()))
-                state[layer] = torch.stack(list(state_tuple))
-            output.append(x_t)
-
-        output = torch.stack(output)
-        if self.batch_first:
-            output = output.transpose(0, 1)
-        state = tuple(state.transpose(0, 1))
-        return output, state
 
 class RolloutBuffer:
     def __init__(self):
@@ -527,6 +389,20 @@ class PPOTrainer:
         returns = adv_critic + values[:-1]
 
         return adv_actor, returns
+    
+    def masked_mean(self, x, mask=None):
+        """
+        计算带掩码的均值
+        如果没有提供掩码，则返回 x 的均值
+        """
+        if mask is None:
+            return x.mean()
+        else:
+            masked_x = x * mask
+            masked_count = mask.sum()
+            if masked_count == 0:
+                return torch.tensor(0.0, device=x.device)
+            return masked_x.sum() / masked_count
 
     def update_model(self, advantages, returns):
         """
@@ -606,15 +482,18 @@ class PPOTrainer:
                     clip_num = max(int(len(clip_idx) * self.cfg.clip_cov_ratio), 1)
                     clip_idx = clip_idx[torch.randperm(len(clip_idx))[:min(clip_num, len(clip_idx))]]
                     corr[clip_idx] = 0.0
-                clip_frac = torch.mean(((ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max))).float() * corr)
-                policy_loss = torch.mean(-torch.min(surr1, surr2) * corr)
+                clip_frac = self.masked_mean(
+                    (ratio < (1 - self.cfg.clip_eps_min)) | (ratio > (1 + self.cfg.clip_eps_max)),
+                    corr
+                )
+                policy_loss = self.masked_mean(-torch.min(surr1, surr2), corr)
                 
                 value_clip = old_values_flat + (values_flat - old_values_flat).clamp(-self.cfg.clip_eps_min, self.cfg.clip_eps_max)
                 value_loss1 = (values_flat - ret_batch_flat).pow(2)
                 value_loss2 = (value_clip - ret_batch_flat).pow(2)
-                value_loss = 0.5 * torch.mean(corr * torch.max(value_loss1, value_loss2))
+                value_loss = 0.5 * self.masked_mean(torch.max(value_loss1, value_loss2), corr)
                 
-                entropy = (dist.entropy() * corr).mean()
+                entropy = self.masked_mean(dist.entropy(), corr)
                 entropy_loss = self.ent_coef * -entropy
                 
                 rnd_loss = (predict - target).pow(2).mean()
