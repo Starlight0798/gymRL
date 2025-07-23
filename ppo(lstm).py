@@ -36,7 +36,7 @@ class Config:
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
-        self.entropy_coef = 0.02        # 熵奖励系数
+        self.entropy_coef = 0.015       # 熵奖励系数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
         self.anneal = False             # 是否退火
@@ -238,7 +238,8 @@ class URNN(nn.Module):
         
         if self.chunk_size > 1:
             h_in = torch.chunk(hidden_state, self.chunk_size, dim=-1)
-            rnn_out, h_out = self.rnn(x, tuple(h_in))
+            h_in = tuple(h.contiguous() for h in h_in)
+            rnn_out, h_out = self.rnn(x, h_in)
             new_hidden_state = torch.cat(h_out, dim=-1)
         else:
             h_in = hidden_state
@@ -398,6 +399,7 @@ class PPOTrainer:
         if mask is None:
             return x.mean()
         else:
+            assert x.shape == mask.shape, "x and mask must have the same shape"
             masked_x = x * mask
             masked_count = mask.sum()
             if masked_count == 0:
