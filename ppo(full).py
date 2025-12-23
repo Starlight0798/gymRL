@@ -34,6 +34,8 @@ class Config:
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
         self.entropy_coef = 0.01        # 熵奖励系数
+        self.erc_beta_low = 0.05        # ERC 下限参数
+        self.erc_beta_high = 0.05       # ERC 上限参数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
         self.anneal = False             # 是否退火
@@ -167,7 +169,8 @@ class ActorCritic(nn.Module):
         dist = Categorical(logits=logits)
         action = dist.sample() if not deterministic else logits.argmax(dim=-1)
         log_prob = dist.log_prob(action)
-        return action.cpu().item(), log_prob.cpu().item(), value.squeeze().cpu()
+        entropy = dist.entropy()
+        return action.cpu().item(), log_prob.cpu().item(), value.squeeze().cpu(), entropy.cpu().item()
     
     def get_value(self, x):
         """获取状态价值"""
@@ -183,6 +186,7 @@ class RolloutBuffer:
         self.values = []
         self.rewards = []
         self.dones = [] 
+        self.old_entropies = []
         self.next_value = None
         
     def clear(self):
@@ -193,6 +197,7 @@ class RolloutBuffer:
         self.values.clear()
         self.rewards.clear()
         self.dones.clear()
+        self.old_entropies.clear()
         self.next_value = None
 
 # PPO训练器
@@ -230,7 +235,7 @@ class PPOTrainer:
         for _ in range(self.cfg.update_freq):
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device)
             with torch.no_grad():
-                action, log_prob, value = self.model.get_action(state_tensor)
+                action, log_prob, value, entropy = self.model.get_action(state_tensor)
                 
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             done = terminated or truncated
@@ -242,6 +247,7 @@ class PPOTrainer:
             self.buffer.values.append(value)
             self.buffer.rewards.append(reward)
             self.buffer.dones.append(done)
+            self.buffer.old_entropies.append(entropy)
             
             state = next_state
             episode_reward += reward
@@ -280,11 +286,12 @@ class PPOTrainer:
         states = torch.tensor(self.buffer.states, dtype=torch.float32).to(self.cfg.device)
         actions = torch.tensor(self.buffer.actions, dtype=torch.float32).to(self.cfg.device).long()
         old_log_probs = torch.tensor(self.buffer.log_probs, dtype=torch.float32).to(self.cfg.device)
+        old_entropies = torch.tensor(self.buffer.old_entropies, dtype=torch.float32).to(self.cfg.device)
         advantages = torch.tensor(advantages, dtype=torch.float32).to(self.cfg.device)
         returns = torch.tensor(returns, dtype=torch.float32).to(self.cfg.device)
 
         # 创建数据加载器
-        dataset = torch.utils.data.TensorDataset(states, actions, old_log_probs, advantages, returns)
+        dataset = torch.utils.data.TensorDataset(states, actions, old_log_probs, old_entropies, advantages, returns)
         loader = torch.utils.data.DataLoader(dataset, batch_size=self.cfg.batch_size, shuffle=True)
         
         # 训练指标跟踪
@@ -294,20 +301,27 @@ class PPOTrainer:
         approx_kls = []
         clip_fracs = []
         covs_list = []
+        erc_clip_fracs = []
         
         for _ in range(self.cfg.num_epochs):
             for batch in loader:
-                s_batch, a_batch, old_lp_batch, adv_batch, ret_batch = batch
+                s_batch, a_batch, old_lp_batch, old_ent_batch, adv_batch, ret_batch = batch
 
                 # 计算新策略的输出
                 logits, values = self.model(s_batch)
                 dist = Categorical(logits=logits)
                 new_log_probs = dist.log_prob(a_batch)
+                new_entropies = dist.entropy()
+                
+                # 计算熵比例 (Entropy Ratio)
+                entropy_ratio = new_entropies / (old_ent_batch + 1e-8)
+                erc_mask = ((entropy_ratio > (1 - self.cfg.erc_beta_low)) & 
+                            (entropy_ratio < (1 + self.cfg.erc_beta_high))).float()
                 
                 # 重要性采样比率
                 ratio = (new_log_probs - old_lp_batch).exp()
                 covs = (new_log_probs - new_log_probs.mean()) * (adv_batch - adv_batch.mean())
-                corr = torch.ones_like(adv_batch)
+                corr = torch.ones_like(adv_batch) * erc_mask
                 
                 # 策略损失计算  
                 clip_ratio = ratio.clamp(0.0, self.cfg.dual_clip)
@@ -343,6 +357,7 @@ class PPOTrainer:
                 entropy_losses.append(entropy.item())
                 clip_fracs.append(clip_frac.item())
                 covs_list.append(covs.mean().item())
+                erc_clip_fracs.append(1.0 - erc_mask.mean().item())
                 
                 # 计算近似KL散度
                 with torch.no_grad():
@@ -363,6 +378,7 @@ class PPOTrainer:
             f"Entropy: {np.mean(entropy_losses):.4f} | "
             f"KL: {np.mean(approx_kls):.4f} | "
             f"Clip Frac: {np.mean(clip_fracs):.2%} | "
+            f"ERC Clip: {np.mean(erc_clip_fracs):.2%} | "
             f"LR: {self.optimizer.param_groups[0]['lr']:.6f} | "
             f"Ent Coef: {self.ent_coef:.4f} | "
             f"Cov: {np.mean(covs_list):.4f}"
@@ -391,7 +407,7 @@ class PPOTrainer:
             done = False
             while not done:
                 with torch.no_grad():
-                    action, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).to(self.cfg.device), deterministic=True)
+                    action, _, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).to(self.cfg.device), deterministic=True)
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
@@ -413,7 +429,7 @@ class PPOTrainer:
         while not done:
             env.render()
             with torch.no_grad():
-                action, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), deterministic=True)
+                action, _, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), deterministic=True)
             state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             total_reward += reward
