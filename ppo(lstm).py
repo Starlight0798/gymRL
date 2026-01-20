@@ -78,7 +78,7 @@ class ActorCritic(nn.Module):
         self.rnn = URNN(
             input_size=shared_out_dim, 
             hidden_size=512, 
-            layer=nn.LSTM,
+            layer=nn.GRU,
         )   
         
         self.actor = MLP([512, 512, action_dim], last_std=0.001)
