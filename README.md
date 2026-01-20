@@ -24,8 +24,9 @@ PPO可以加入以下几个trick(部分是当今大模型RL的trick)，基本都
 - use-LSTM
 - adam-eps
 - erc-clip
+- mHC(network)
 
-具体我已经实现在ppo(lstm)，可以参考代码以及相关的论文。
+具体我已经实现在ppo(full)以及ppo(lstm)，可以参考代码以及相关的论文。
 
 > 以下是旧版README，仅供参考。
 
