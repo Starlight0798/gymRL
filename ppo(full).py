@@ -618,7 +618,7 @@ class PPOTrainer:
             done = False
             while not done:
                 with torch.no_grad():
-                    action, _, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).to(self.cfg.device), deterministic=True)
+                    action, _, _, _ = self.model.get_action(torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.cfg.device), deterministic=True)
                 state, reward, terminated, truncated, _ = self.env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
