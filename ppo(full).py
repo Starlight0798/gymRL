@@ -10,10 +10,8 @@ import warnings
 import signal
 import sys
 from typing import List, Type, Optional
-warnings.filterwarnings('ignore', category=UserWarning)
-
-import torch.nn.functional as F
 import math
+warnings.filterwarnings('ignore', category=UserWarning)
 
 # 配置类
 class Config:
@@ -24,10 +22,10 @@ class Config:
         
         # mHC 参数
         self.use_mhc = True             # 是否使用 mHC
-        self.mhc_dim = 128              # mHC 特征维度
+        self.mhc_dim = 256              # mHC 特征维度 (Increased for better capacity)
         self.mhc_rate = 2               # mHC 扩展率 (branches)
         self.mhc_layers = 2             # mHC 层数
-        self.mhc_sk_it = 20             # Sinkhorn-Knopp 迭代次数
+        self.mhc_sk_it = 10             # Sinkhorn-Knopp 迭代次数 (Reduced for speed/stability)
         
         # 训练参数
         self.max_train_steps = 5e6      # 最大训练步数
@@ -117,7 +115,19 @@ class ManifoldHyperConnectionFuse(nn.Module):
         # parameters
         self.w = nn.Parameter(torch.zeros(self.nc, self.n2 + 2*self.n))
         self.alpha = nn.Parameter(torch.ones(3) * 0.01)
-        self.beta = nn.Parameter(torch.zeros(self.n2 + 2*self.n) * 0.01)
+        
+        # Initialize beta to favor identity mapping for H_res (mixing matrix)
+        # This prevents branch collapse at initialization
+        beta_init = torch.zeros(self.n2 + 2*self.n)
+        beta_init[:2*self.n] = 0.01 # H_pre and H_post small init
+        
+        # H_res: initialize close to Identity to keep branches independent initially
+        res_beta = torch.zeros(self.n, self.n)
+        res_beta.fill_(-2.0) # Suppress off-diagonal
+        res_beta.fill_diagonal_(2.0) # Encourage diagonal
+        beta_init[2*self.n:] = res_beta.flatten()
+        
+        self.beta = nn.Parameter(beta_init)
 
         # max sinkhorn knopp iterations
         self.max_sk_it = max_sk_it
