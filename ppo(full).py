@@ -22,7 +22,7 @@ class Config:
         
         # mHC 参数
         self.use_mhc = True             # 是否使用 mHC
-        self.mhc_dim = 256              # mHC 特征维度 (Increased for better capacity)
+        self.mhc_dim = 128              # mHC 特征维度 (Increased for better capacity)
         self.mhc_rate = 2               # mHC 扩展率 (branches)
         self.mhc_layers = 2             # mHC 层数
         self.mhc_sk_it = 10             # Sinkhorn-Knopp 迭代次数 (Reduced for speed/stability)
