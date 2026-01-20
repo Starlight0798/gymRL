@@ -12,6 +12,9 @@ import sys
 from typing import List, Type, Optional
 warnings.filterwarnings('ignore', category=UserWarning)
 
+import torch.nn.functional as F
+import math
+
 # 配置类
 class Config:
     def __init__(self):
@@ -19,26 +22,33 @@ class Config:
         self.env_name = "LunarLander-v3"
         self.seed = None
         
+        # mHC 参数
+        self.use_mhc = True             # 是否使用 mHC
+        self.mhc_dim = 128              # mHC 特征维度
+        self.mhc_rate = 2               # mHC 扩展率 (branches)
+        self.mhc_layers = 2             # mHC 层数
+        self.mhc_sk_it = 20             # Sinkhorn-Knopp 迭代次数
+        
         # 训练参数
-        self.max_train_steps = 3e6      # 最大训练步数
+        self.max_train_steps = 5e6      # 最大训练步数
         self.update_freq = 4096         # 每次更新前收集的经验数
         self.num_epochs = 4             # 每次更新时的epoch数
         self.batch_size = 1024          # 每次更新的批次大小
         self.gamma = 0.995              # 折扣因子
         self.lam_actor = 0.95           # GAE参数 - actor
-        self.lam_critic = 0.97          # GAE参数 - critic
+        self.lam_critic = 0.95          # GAE参数 - critic
         self.clip_eps_min = 0.2         # PPO-CLIP-MIN参数 
         self.clip_eps_max = 0.28        # PPO-CLIP-MAX参数
-        self.clip_cov_ratio = 0.06      # PPO-COV-RATIO参数
+        self.clip_cov_ratio = 0.0       # PPO-COV-RATIO参数
         self.clip_cov_min = 1.0         # PPO-COV-MIN参数
         self.clip_cov_max = 5.0         # PPO-COV-MAX参数
         self.dual_clip = 3.0            # 双重裁剪
         self.entropy_coef = 0.01        # 熵奖励系数
-        self.erc_beta_low = 0.05        # ERC 下限参数
-        self.erc_beta_high = 0.05       # ERC 上限参数
+        self.erc_beta_low = 0.06        # ERC 下限参数
+        self.erc_beta_high = 0.06       # ERC 上限参数
         self.lr = 3e-4                  # 学习率
         self.max_grad_norm = 0.5        # 梯度裁剪阈值
-        self.anneal = False             # 是否退火
+        self.anneal = True              # 是否退火
         self.device = 'cpu'
 
 def layer_init(layer, std: float):
@@ -57,6 +67,184 @@ def make_fc_layer(
 ):
     layer = nn.Linear(in_features, out_features, bias=use_bias)
     return layer_init(layer, std=std)
+
+
+# --- mHC Components Start ---
+
+def sinkhorn_knopp_batched(A, it=1000, eps=1e-8):
+    """
+    Batched Sinkhorn-Knopp algorithm to project matrix A onto the Birkhoff polytope (doubly stochastic matrices).
+    A should be a non-negative matrix.
+    """
+    batch_size, n, _, = A.shape
+    
+    u = torch.ones(batch_size, n, device=A.device)
+    v = torch.ones(batch_size, n, device=A.device)
+    
+    for _ in range(it):
+        v_temp = v.unsqueeze(2)  # (B, n, 1)
+        Av = torch.bmm(A, v_temp).squeeze(2)  # (B, n)
+        u = 1.0 / (Av + eps)
+        
+        u_temp = u.unsqueeze(2)  # (B, n, 1)
+        At_u = torch.bmm(A.transpose(1, 2), u_temp).squeeze(2)
+        v = 1.0 / (At_u + eps)
+        
+    U = torch.diag_embed(u)  # (B, n, n)
+    V = torch.diag_embed(v)  # (B, n, n)
+    P = torch.bmm(torch.bmm(U, A), V)
+    
+    return P, U, V
+
+
+class ManifoldHyperConnectionFuse(nn.Module):
+    """
+    mHC Fusion Layer.
+    h: hyper hidden matrix (BxLxNxD)
+    """
+    def __init__(self, dim, rate, max_sk_it):
+        super(ManifoldHyperConnectionFuse, self).__init__()
+
+        self.n = rate
+        self.dim = dim
+
+        self.nc = self.n * self.dim
+        self.n2 = self.n * self.n
+
+        # norm flatten
+        self.norm = RMSNorm(dim*rate)
+
+        # parameters
+        self.w = nn.Parameter(torch.zeros(self.nc, self.n2 + 2*self.n))
+        self.alpha = nn.Parameter(torch.ones(3) * 0.01)
+        self.beta = nn.Parameter(torch.zeros(self.n2 + 2*self.n) * 0.01)
+
+        # max sinkhorn knopp iterations
+        self.max_sk_it = max_sk_it
+
+    def mapping(self, h, res_norm):
+        B, L, N, D = h.shape
+
+        # 1.vectorize
+        h_vec_flat = h.reshape(B, L, N*D)
+        
+        # RMSNorm Fused Trick
+        h_vec = self.norm.weight * h_vec_flat
+
+        # 2.projection
+        H = h_vec @ self.w
+
+        # RMSNorm Fused: compute r
+        r = h_vec_flat.norm(dim=-1, keepdim=True) / math.sqrt(self.nc)
+        r_ = 1.0 / (r + 1e-6)
+        
+        # 4. mapping
+        n = N
+        H_pre = r_ * H[:,:, :n] * self.alpha[0] + self.beta[:n]
+        H_post = r_ * H[:,:, n:2*n] * self.alpha[1] + self.beta[n:2*n]
+        H_res = r_ * H[:,:, 2*n:] * self.alpha[2] + self.beta[2*n:]
+
+        # 5. final constrained mapping 
+        H_pre = torch.sigmoid(H_pre)
+        H_post = 2 * torch.sigmoid(H_post)
+
+        # 6. sinkhorn_knopp iteration
+        H_res = H_res.reshape(B, L, N, N)
+        H_res_exp = H_res.exp()
+        
+        with torch.no_grad():
+            _, U, V = res_norm(H_res_exp.reshape(B*L, N, N), self.max_sk_it)
+        # recover
+        P = torch.bmm(torch.bmm(U.detach(), H_res_exp.reshape(B*L, N, N)), V.detach())
+        H_res = P.reshape(B, L, N, N)
+
+        return H_pre, H_post, H_res
+
+    def process(self, h, H_pre, H_res):
+        # Weighted sum of branches
+        h_pre = H_pre.unsqueeze(dim=2) @ h
+        
+        # Inter-branch mixing
+        h_res = H_res @ h
+        return h_pre, h_res
+
+    def depth_connection(self, h_res, h_out, beta):
+        # Broadcast output back to branches
+        post_mapping = beta.unsqueeze(dim=-1) @ h_out
+        out = post_mapping + h_res
+        return out
+
+
+class MHCBlock(nn.Module):
+    def __init__(self, dim, rate, max_sk_it):
+        super(MHCBlock, self).__init__()
+        # Mixing features (similar to Attention)
+        self.linear1 = nn.Linear(dim, dim)
+        self.mhc1 = ManifoldHyperConnectionFuse(dim=dim, rate=rate, max_sk_it=max_sk_it)
+        
+        # FFN equivalent
+        self.linear2 = nn.Linear(dim, dim)
+        self.mhc2 = ManifoldHyperConnectionFuse(dim=dim, rate=rate, max_sk_it=max_sk_it)
+        
+        self.act = nn.SiLU()
+
+    def forward(self, h):
+        # h: [B, L, N, D]
+        
+        # Block 1
+        H_pre, H_post, H_res = self.mhc1.mapping(h, sinkhorn_knopp_batched)
+        h_pre, h_res = self.mhc1.process(h, H_pre, H_res)
+        # h_pre: [B, L, 1, D]
+        h_out = self.linear1(h_pre)
+        h_out = self.act(h_out)
+        h = self.mhc1.depth_connection(h_res, h_out, beta=H_post)
+        
+        # Block 2
+        H_pre, H_post, H_res = self.mhc2.mapping(h, sinkhorn_knopp_batched)
+        h_pre, h_res = self.mhc2.process(h, H_pre, H_res)
+        # h_pre: [B, L, 1, D]
+        h_out = self.linear2(h_pre)
+        h_out = self.act(h_out)
+        h = self.mhc2.depth_connection(h_res, h_out, beta=H_post)
+        
+        return h
+
+class MHCBackbone(nn.Module):
+    def __init__(self, input_dim, output_dim, rate, num_layers, max_sk_it):
+        super(MHCBackbone, self).__init__()
+        self.rate = rate
+        self.output_dim = output_dim
+        
+        # Input projection
+        self.input_proj = nn.Linear(input_dim, output_dim)
+        
+        # MHC Layers
+        self.layers = nn.ModuleList([
+            MHCBlock(dim=output_dim, rate=rate, max_sk_it=max_sk_it)
+            for _ in range(num_layers)
+        ])
+        
+        self.final_norm = RMSNorm(output_dim)
+
+    def forward(self, x):
+        # x: [B, Input_Dim]
+        B = x.shape[0]
+        
+        # Project and expand to [B, 1, Rate, D]
+        h = self.input_proj(x)
+        h = h.unsqueeze(1).unsqueeze(2)
+        h = h.repeat(1, 1, self.rate, 1)
+        
+        for layer in self.layers:
+            h = layer(h)
+            
+        # Fuse branches (Sum) and flatten
+        h = h.sum(dim=2) 
+        h = h.squeeze(1) 
+        
+        return self.final_norm(h)
+
+# --- mHC Components End ---
 
 
 class RMSNorm(nn.Module):
@@ -146,18 +334,31 @@ class PSCN(nn.Module):
 
 # 演员-评论家网络
 class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, config=None):
         super().__init__()
-        # 共享网络层
-        self.shared = PSCN(
-            input_dim=state_dim, 
-            output_dim=256,
-            depth=4,
-        )
+        
+        if config and hasattr(config, 'use_mhc') and config.use_mhc:
+            self.shared = MHCBackbone(
+                input_dim=state_dim,
+                output_dim=config.mhc_dim,
+                rate=config.mhc_rate,
+                num_layers=config.mhc_layers,
+                max_sk_it=config.mhc_sk_it
+            )
+            shared_out_dim = config.mhc_dim
+        else:
+            # 共享网络层
+            self.shared = PSCN(
+                input_dim=state_dim, 
+                output_dim=256,
+                depth=4,
+            )
+            shared_out_dim = 256
+
         # 策略头
-        self.actor = MLP([256, 256, action_dim], last_std=0.001)
+        self.actor = MLP([shared_out_dim, 256, action_dim], last_std=0.001)
         # 价值头
-        self.critic = MLP([256, 256, 1], last_std=1.0)
+        self.critic = MLP([shared_out_dim, 256, 1], last_std=1.0)
             
     def forward(self, x):
         x = self.shared(x)
@@ -209,7 +410,7 @@ class PPOTrainer:
         action_dim = self.env.action_space.n
         
         # 初始化模型和优化器
-        self.model = ActorCritic(state_dim, action_dim).to(self.cfg.device)
+        self.model = ActorCritic(state_dim, action_dim, config=self.cfg).to(self.cfg.device)
         self.optimizer = optim.Adam(
             self.model.parameters(), 
             lr=self.cfg.lr, 
