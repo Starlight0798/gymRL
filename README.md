@@ -1,36 +1,126 @@
 # gymRL
- 本人学习强化学习(PPO,DQN,SAC,DDPG等算法)，在gym环境下写的代码集。
 
- 主要研究了PPO和DQN类算法，根据各个论文复现了如下改进:
+强化学习算法实现集合，用于学习和研究目的。
+每个算法都是**独立的单文件脚本**，可以直接运行。
 
--  PPO: dual-PPO, clip-PPO, use-RNN, attention, PPG etc.
--  DQN: rainbow DQN
+## 仓库结构
 
-## 更新
+```
+gymRL/
+├── algorithms/          # 重构后的独立实现
+│   ├── dqn_cartpole.py
+│   ├── ppo_lunarlander.py
+│   ├── sac_pendulum.py
+│   └── ...
+├── legacy/              # 原始实现（供参考）
+├── utils/               # 共享工具（legacy代码使用）
+├── assets/              # README图片
+└── requirements.txt
+```
 
-> 注：最新尝试集中在PPO算法进行，建议参阅ppo(full)以及ppo(lstm)
+## 已实现算法
 
-经实验，PPO算法是最具鲁棒性的算法，为主要选择。
+### 基于价值的方法（DQN系列）
 
-PPO可以加入以下几个trick(部分是当今大模型RL的trick)，基本都有指标提升:
+| 文件 | 算法 | 环境 | 关键特性 |
+|------|------|------|----------|
+| `dqn_cartpole.py` | DQN | CartPole-v1 | 经验回放、目标网络 |
+| `ddqn_per_cartpole.py` | Double DQN + PER | CartPole-v1 | 双Q学习、优先经验回放 |
+| `ddqn_per_duel_cartpole.py` | DDQN + PER + Dueling | CartPole-v1 | Dueling架构、PER |
+| `noisy_dqn_cartpole.py` | NoisyNet DQN | CartPole-v1 | 噪声层探索 |
+| `rainbow_dqn_cartpole.py` | Rainbow DQN | CartPole-v1 | NoisyNet、Dueling、PER、N-step |
+| `noisy_dqn_flappybird.py` | NoisyNet DQN | FlappyBird-v0 | PSCN骨干网络、Dueling |
 
-- value_clip
-- clip-higher
-- ent_coef
-- decouple-lamda
-- dual-clip
-- clip-covs
-- RND-reward
-- use-LSTM
-- adam-eps
-- erc-clip
-- mHC(network)
+### 策略梯度方法（PPO系列）
 
-具体我已经实现在ppo(full)以及ppo(lstm)，可以参考代码以及相关的论文。
+| 文件 | 算法 | 环境 | 关键特性 |
+|------|------|------|----------|
+| `ppo_lunarlander.py` | PPO | LunarLander-v3 | 裁剪替代目标、GAE、dual-clip |
+| `ppo_rnn_lunarlander.py` | PPO + RNN | LunarLander-v3 | 基于GRU的Actor-Critic |
+| `ppo_rnn_flappybird.py` | PPO + RNN | FlappyBird-v0 | PSCN + GRU骨干网络 |
+| `ppg_rnn_lunarlander.py` | PPG + RNN | LunarLander-v3 | 相位策略梯度 |
+| `ppo_full_lunarlander.py` | PPO (完整版) | LunarLander-v3 | mHC、ERC、全部技巧 |
+| `ppo_lstm_lunarlander.py` | PPO + LSTM | LunarLander-v3 | RND、mHC、LSTM |
 
-> 以下是旧版README，仅供参考。
+### Actor-Critic方法（连续控制）
 
-## 算法介绍
+| 文件 | 算法 | 环境 | 关键特性 |
+|------|------|------|----------|
+| `ddpg_pendulum.py` | DDPG | Pendulum-v1 | 确定性策略、软更新 |
+| `td3_pendulum.py` | TD3 | Pendulum-v1 | 双Critic、延迟更新 |
+| `sac_pendulum.py` | SAC | Pendulum-v1 | 熵正则化、自动alpha调节 |
+| `sac_cartpole.py` | SAC (离散) | CartPole-v1 | 离散动作SAC |
+
+### 经典强化学习（表格方法）
+
+| 文件 | 算法 | 环境 | 关键特性 |
+|------|------|------|----------|
+| `qlearning_frozenlake.py` | Q-Learning | FrozenLake-v1 | Q表、奖励塑形 |
+| `qlearning_cliffwalking.py` | Q-Learning | CliffWalking-v0 | ε-贪婪探索 |
+| `mountaincar_baseline.py` | 规则策略 | MountainCar-v0 | 手工设计的基线 |
+
+## 快速开始
+
+每个算法文件都是独立的，可以直接运行：
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行任意算法
+python algorithms/dqn_cartpole.py
+python algorithms/ppo_lunarlander.py
+python algorithms/td3_pendulum.py
+```
+
+训练过程中按 `Ctrl+C` 可以优雅地停止并运行评估。
+
+## 推荐算法
+
+- **离散动作（入门）**：从 `dqn_cartpole.py` 开始
+- **离散动作（进阶）**：使用 `ppo_full_lunarlander.py` 或 `ppo_lstm_lunarlander.py`
+- **连续动作**：使用 `td3_pendulum.py`（最稳定）
+- **Rainbow DQN**：使用 `rainbow_dqn_cartpole.py` 体验DQN全部改进
+
+## PPO技巧实现
+
+`ppo_full_lunarlander.py` 和 `ppo_lstm_lunarlander.py` 包含现代强化学习技巧：
+
+- `value_clip` - 裁剪价值函数更新
+- `clip-higher` - 非对称裁剪边界
+- `dual-clip` - 负优势的双重裁剪
+- `ent_coef` - 熵正则化与退火
+- `decouple-lambda` - Actor/Critic分离的GAE lambda
+- `ERC` - 熵比率裁剪
+- `RND` - 随机网络蒸馏（探索）
+- `mHC` - 流形超连接网络架构
+- `adam-eps` - 调优的Adam epsilon参数
+
+## Tensorboard日志
+
+部分算法支持Tensorboard日志：
+
+```bash
+tensorboard --logdir=exp
+```
+
+然后打开 http://localhost:6006/ 查看训练曲线。
+
+![tensorboard示例](assets/image-20240602232200101.png)
+
+## 可视化训练
+
+要实时观看训练过程，修改Config类：
+
+```python
+class Config:
+    def __init__(self):
+        self.render_mode = 'human'  # 默认是 'rgb_array'
+```
+
+![训练可视化](assets/image-20240602231618885.png)
+
+## 算法简介
 
 ### PPO（Proximal Policy Optimization）
 
@@ -52,59 +142,6 @@ DDPG是一种结合了策略梯度和Q学习的算法，适用于连续动作空
 
 TD3是对DDPG的改进，通过延迟更新策略网络和目标网络来减少Q值的过估计。
 
-------
-
-我在离散动作空间的代码探索主要在PPO和PPO+LSTM代码进行，读者可以重点关注。
-
-### Tensorboard-SummaryWriter使用
-
-我在**其中一些代码**(PPO, RDQN)加入了tensorboard的使用来获取训练和评估指标，使用方法：
-
-1. 正在运行训练，或等到训练结束，代码运行目录会生成exp文件夹，里面存放了数据文件
-2. 代码运行目录下打开命令行窗口，输入：
-
-```cmd
-tensorboard --logdir=exp
-```
-
-如下图所示：
-
-![image-20240407180114610](assets/image-20240407180114610.png)
-
-然后打开http://localhost:6006/ 即可。
-
-可以直观地看到评估和训练的数据图。
-
-<img src="assets/image-20240602232200101.png" alt="image-20240602232200101"  />
-
-如果多条数据线重合在一起影响观看，左边可以取消勾选，如果还是无法解决，建议在exp目录下手动删除不需要的数据文件，然后重启tensorboard即可。理论上eval/reward这条曲线应该是不断上升的，如果不是则需要调参(玄学)。
-
-## 可视化训练
-
-想要在训练过程**直接**观看训练效果的读者，可以在设置里面写：
-
-```python
-class Config(BasicConfig):
-    def __init__(self):
-        super(Config, self).__init__()
-        ......
-        self.render_mode = 'human' # 默认是"rgb_array"
-        .....
-```
-
-将其设置成`human`后，可以直接**观看训练过程**：
-
-<img src="assets/image-20240602231618885.png" alt="image-20240602231618885" style="zoom:67%;" />
-
 ## 许可证
 
 本项目采用MIT许可证，详见LICENSE。
-
-## 建议
-
-对DQN感兴趣的读者可以使用`CartPole(RDQN)`，即`Rainbow-DQN`。如果是初学者，建议先看`CartPole(DQN)`，这是DQN算法的基本实现，其它如DDQN，PER, DUEL均是在其基础上的改进实验。其中改进最显著的方法是DDQN(double-DQN)，PER和DUEL并不是很显著，并且会降低训练速度，因此读者可以参照只使用DDQN。
-
-对PPO感兴趣的读者可以参考其中PPO以及PPO+RNN的算法，使用了RNN，PSCN等技巧。
-
-对于连续动作空间，最推荐使用的算法是TD3，参考`Pendulum(TD3)`。离散空间`DQN`和`PPO`均可。
-
